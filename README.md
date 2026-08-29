@@ -114,12 +114,33 @@ python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 | `--extensions` | `mkv,mp4,m4v,avi` | Video extensions to process |
 | `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
 | `--report path.json` | (none) | Write a JSON summary of every file's outcome |
+| `--debug-dir path/` | (none) | Save every sampled frame (raw + cropped) and its OCR text per video |
 | `-v` | off | Verbose/debug logging |
 
 Files with no confident match, or whose target filename collides with
 another file, are never renamed — they're logged as `manual_review` /
 `collision` in the console output and in `--report`, so you can retitle them
 by hand.
+
+### Troubleshooting bad matches
+
+If every file comes back as `manual_review` with garbled OCR text, the
+title card is probably outside the sampled crop region or scan window
+rather than a font/threshold problem. Run one file through with
+`--debug-dir` to see exactly what's being captured:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Your Show" \
+  --debug-dir debug_frames --dry-run
+```
+
+This writes `debug_frames/<video name>/<timestamp>s_raw.png` (the full
+sampled frame) and `..._crop.png` (the exact region OCR ran on) for every
+sample point, plus logs the OCR text read at each timestamp. Open a few of
+the `_raw.png` files around where you expect the title card to appear —
+if it isn't there, increase `--max-scan`; if it's there but outside the
+white box in `_crop.png`, switch `--crop` to `full`, `lower-third`, or
+`upper-third` to match where your show actually places its title text.
 
 ## Project layout
 

@@ -35,3 +35,6 @@ class RunConfig:
     pattern: str = DEFAULT_PATTERN
     dry_run: bool = False
     report_path: Optional[Path] = None
+
+    # Diagnostics
+    debug_dir: Optional[Path] = None

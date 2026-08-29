@@ -8,12 +8,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import cv2
 import pytesseract
 
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, RunConfig
 from .episodes import Episode, EpisodeFetchError, get_episode_list
 from .matcher import MatchResult, build_filename, match_episode
-from .ocr import extract_text
+from .ocr import crop_region, extract_text
 from .video import sample_frames
 
 logger = logging.getLogger("titletracer")
@@ -65,6 +66,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--tesseract-cmd", default=None, help="Path to the tesseract executable, if not on PATH")
     p.add_argument("--report", type=Path, default=None, help="Write a JSON results report to this path")
     p.add_argument(
+        "--debug-dir", type=Path, default=None,
+        help="Save every sampled frame (raw + the exact --crop region used) and its OCR text to this "
+             "directory, one subfolder per video -- use this to see why a title card isn't matching",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Only print planned renames; do not touch any files on disk",
     )
@@ -81,8 +87,21 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
     """Scan a single video for its title card, stopping as soon as a
     confident match is found (or the scan window is exhausted)."""
     best = MatchResult(None, 0.0, "")
+
+    debug_video_dir = None
+    if cfg.debug_dir:
+        debug_video_dir = cfg.debug_dir / video_path.stem
+        debug_video_dir.mkdir(parents=True, exist_ok=True)
+
     for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
         text, ocr_conf = extract_text(frame.image, cfg.crop_mode)
+
+        if debug_video_dir is not None:
+            stamp = f"{frame.timestamp_sec:06.1f}s"
+            cv2.imwrite(str(debug_video_dir / f"{stamp}_raw.png"), frame.image)
+            cv2.imwrite(str(debug_video_dir / f"{stamp}_crop.png"), crop_region(frame.image, cfg.crop_mode))
+            logger.info("  @ %s  ocr=%r  ocr_conf=%.0f", stamp, text, ocr_conf)
+
         if not text:
             continue
 
@@ -212,6 +231,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         dry_run=args.dry_run,
         tesseract_cmd=args.tesseract_cmd,
         report_path=args.report,
+        debug_dir=args.debug_dir,
     )
 
     sys.exit(run(cfg))
