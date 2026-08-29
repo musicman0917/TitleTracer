@@ -1,0 +1,8 @@
+{
+  "episodes": [
+    { "season": 1, "episode": 1, "title": "Pilot" },
+    { "season": 1, "episode": 2, "title": "The Second Episode" },
+    { "season": 1, "episode": 3, "title": "Something Strange Happens" },
+    { "season": 2, "episode": 1, "title": "A New Beginning" }
+  ]
+}

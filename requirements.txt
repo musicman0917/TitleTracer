@@ -1,0 +1,5 @@
+opencv-python-headless>=4.8
+pytesseract>=0.3.10
+rapidfuzz>=3.6
+requests>=2.31
+numpy>=1.24

@@ -1,0 +1,221 @@
+"""Command-line entry point: wires together episode fetching, frame
+sampling, OCR, fuzzy matching, and (optionally) the actual renaming."""
+
+import argparse
+import json
+import logging
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+import pytesseract
+
+from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, RunConfig
+from .episodes import Episode, EpisodeFetchError, get_episode_list
+from .matcher import MatchResult, build_filename, match_episode
+from .ocr import extract_text
+from .video import sample_frames
+
+logger = logging.getLogger("titletracer")
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="titletracer",
+        description=(
+            "Detect episode title cards in ripped video files via OCR and "
+            "rename them to match an official episode list."
+        ),
+    )
+    p.add_argument("directory", type=Path, help="Directory containing video files to process")
+    p.add_argument("--show", required=True, help="Show name (used for API lookup and in the filename)")
+    p.add_argument(
+        "--source", choices=["tvmaze", "tmdb", "local"], default="tvmaze",
+        help="Episode list source (default: tvmaze)",
+    )
+    p.add_argument(
+        "--episodes-json", type=Path, default=None,
+        help="Local JSON episode list; required with --source local, otherwise used as a fallback "
+             "if the online source fails",
+    )
+    p.add_argument("--tmdb-api-key", default=None, help="TMDb API key (or set the TMDB_API_KEY env var)")
+    p.add_argument("--season", type=int, default=None, help="Restrict matching to a single season number")
+    p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
+    p.add_argument(
+        "--max-scan", type=float, default=300.0,
+        help="Only scan the first N seconds of each video (default: 300 = 5 minutes)",
+    )
+    p.add_argument(
+        "--threshold", type=float, default=80.0,
+        help="Minimum fuzzy-match confidence 0-100 to accept a match (default: 80)",
+    )
+    p.add_argument(
+        "--crop", choices=["full", "center", "lower-third", "upper-third"], default="center",
+        help="Region of the frame to run OCR on (default: center)",
+    )
+    p.add_argument(
+        "--extensions", default=",".join(e.lstrip(".") for e in DEFAULT_EXTENSIONS),
+        help="Comma-separated video extensions to process (default: mkv,mp4,m4v,avi)",
+    )
+    p.add_argument(
+        "--pattern", default=DEFAULT_PATTERN,
+        help="Rename pattern; available tokens: {show} {season} {episode} {title} "
+             f"(default: '{DEFAULT_PATTERN}')",
+    )
+    p.add_argument("--tesseract-cmd", default=None, help="Path to the tesseract executable, if not on PATH")
+    p.add_argument("--report", type=Path, default=None, help="Write a JSON results report to this path")
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="Only print planned renames; do not touch any files on disk",
+    )
+    p.add_argument("-v", "--verbose", action="store_true", help="Verbose (debug) logging")
+    return p.parse_args(argv)
+
+
+def find_video_files(directory: Path, extensions: List[str]) -> List[Path]:
+    exts = {("." + e.lstrip(".")).lower() for e in extensions}
+    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in exts)
+
+
+def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> MatchResult:
+    """Scan a single video for its title card, stopping as soon as a
+    confident match is found (or the scan window is exhausted)."""
+    best = MatchResult(None, 0.0, "")
+    for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
+        text, ocr_conf = extract_text(frame.image, cfg.crop_mode)
+        if not text:
+            continue
+
+        result = match_episode(text, episodes, cfg.threshold)
+        logger.debug(
+            "%s @ %.0fs: ocr=%r ocr_conf=%.0f match=%s score=%.1f",
+            video_path.name, frame.timestamp_sec, text, ocr_conf,
+            result.episode.code if result.episode else None, result.score,
+        )
+        if result.score > best.score:
+            best = result
+        if best.episode is not None:
+            break
+
+    return best
+
+
+def run(cfg: RunConfig) -> int:
+    if cfg.tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
+
+    try:
+        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key)
+    except EpisodeFetchError as exc:
+        logger.error("Could not obtain an episode list: %s", exc)
+        return 1
+
+    if cfg.season is not None:
+        episodes = [e for e in episodes if e.season == cfg.season]
+    if not episodes:
+        logger.error("No episodes available to match against (check --show / --season / episode source)")
+        return 1
+    logger.info("Loaded %d candidate episode(s) for %r", len(episodes), cfg.show_name)
+
+    videos = find_video_files(cfg.directory, cfg.extensions)
+    if not videos:
+        logger.error("No video files found in %s", cfg.directory)
+        return 1
+
+    used_targets = set()
+    report = []
+
+    for video in videos:
+        logger.info("Processing %s", video.name)
+        try:
+            result = process_video(video, episodes, cfg)
+        except IOError as exc:
+            logger.error("  Skipping (could not read video): %s", exc)
+            report.append({"file": video.name, "status": "error", "reason": str(exc)})
+            continue
+
+        if result.episode is None:
+            logger.warning(
+                "  MANUAL REVIEW: no confident match (best score %.0f, ocr=%r)",
+                result.score, result.ocr_text,
+            )
+            report.append({
+                "file": video.name, "status": "manual_review",
+                "best_score": round(result.score, 1), "ocr_text": result.ocr_text,
+            })
+            continue
+
+        new_name = build_filename(cfg.show_name, result.episode, video.suffix, cfg.pattern)
+        target = video.with_name(new_name)
+
+        if target.name in used_targets or (target.exists() and target != video):
+            logger.warning("  MANUAL REVIEW: target filename %r already exists/claimed", new_name)
+            report.append({
+                "file": video.name, "status": "collision",
+                "target": new_name, "matched": result.episode.code,
+            })
+            continue
+
+        used_targets.add(target.name)
+        logger.info(
+            "  Matched %s %r (score %.0f) -> %s",
+            result.episode.code, result.episode.title, result.score, new_name,
+        )
+        report.append({
+            "file": video.name, "status": "matched", "target": new_name,
+            "episode": result.episode.code, "title": result.episode.title,
+            "score": round(result.score, 1),
+        })
+
+        if not cfg.dry_run:
+            video.rename(target)
+            logger.info("  Renamed.")
+
+    if cfg.report_path:
+        cfg.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        logger.info("Wrote report to %s", cfg.report_path)
+
+    manual = [r for r in report if r["status"] != "matched"]
+    if manual:
+        logger.warning("%d file(s) need manual review; see the report above for details.", len(manual))
+
+    if cfg.dry_run:
+        logger.info("Dry run complete -- no files were renamed. Re-run without --dry-run to apply.")
+
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
+
+    if not args.directory.is_dir():
+        logger.error("Not a directory: %s", args.directory)
+        sys.exit(1)
+
+    cfg = RunConfig(
+        directory=args.directory,
+        show_name=args.show,
+        source=args.source,
+        local_json=args.episodes_json,
+        tmdb_api_key=args.tmdb_api_key,
+        season=args.season,
+        interval_sec=args.interval,
+        max_scan_sec=args.max_scan,
+        threshold=args.threshold,
+        crop_mode=args.crop,
+        extensions=[e.strip() for e in args.extensions.split(",") if e.strip()],
+        pattern=args.pattern,
+        dry_run=args.dry_run,
+        tesseract_cmd=args.tesseract_cmd,
+        report_path=args.report,
+    )
+
+    sys.exit(run(cfg))
+
+
+if __name__ == "__main__":
+    main()

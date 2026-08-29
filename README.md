@@ -1,1 +1,137 @@
 # TitleTracer
+
+A local command-line tool that scans ripped TV episode video files for their
+title card, OCRs the text, matches it against an official episode list, and
+renames the file accordingly.
+
+Pipeline: **sample frames -> preprocess -> OCR -> fuzzy match -> rename**.
+
+## How it works
+
+1. **Frame sampling** (`titletracer/video.py`) — seeks directly to timestamps
+   every `--interval` seconds (default 5s), stopping at `--max-scan` seconds
+   (default 300s / 5 minutes), since title cards live early in the episode.
+   This avoids decoding the whole file.
+2. **Preprocessing + OCR** (`titletracer/ocr.py`) — crops to the region where
+   title cards usually sit (`--crop`, default `center`), upscales, denoises,
+   boosts contrast, and tries a few binarization variants (both text
+   polarities) before running Tesseract. It keeps whichever variant Tesseract
+   itself scores most confidently.
+3. **Episode list** (`titletracer/episodes.py`) — fetched from TVMaze (no key
+   required) or TMDb (`--tmdb-api-key`), or loaded from a local JSON file.
+   The online source falls back to `--episodes-json` automatically if the
+   request fails.
+4. **Fuzzy matching** (`titletracer/matcher.py`) — normalizes and compares the
+   OCR text against every candidate title using RapidFuzz's
+   `token_sort_ratio`. A match is only accepted if it clears `--threshold`
+   (default 80); otherwise the file is flagged for manual review instead of
+   guessing.
+5. **Renaming** (`titletracer/cli.py`) — builds the new filename from
+   `--pattern`, checks for collisions, and either prints the plan
+   (`--dry-run`) or renames the file.
+
+## Installation
+
+### System dependency: Tesseract OCR
+
+```bash
+# Debian/Ubuntu
+sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+# macOS (Homebrew)
+brew install tesseract
+
+# Windows
+choco install tesseract
+# or download the installer from https://github.com/UB-Mannheim/tesseract/wiki
+```
+
+If `tesseract` isn't on your `PATH`, point the tool at it with
+`--tesseract-cmd /path/to/tesseract`.
+
+### Python dependencies
+
+```bash
+python3 -m venv venv && source venv/bin/activate   # optional but recommended
+pip install -r requirements.txt
+```
+
+## Usage
+
+Always start with `--dry-run` to review the proposed matches before touching
+any files.
+
+### Using TVMaze (default, no API key needed)
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Breaking Bad" --dry-run
+```
+
+### Using TMDb
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Breaking Bad" \
+  --source tmdb --tmdb-api-key YOUR_KEY --dry-run
+# or export TMDB_API_KEY instead of passing --tmdb-api-key
+```
+
+### Using a local episode list (no network required)
+
+```bash
+python3 titletracer.py /path/to/episodes --show "My Show" \
+  --source local --episodes-json sample_episodes.json --dry-run
+```
+
+`sample_episodes.json` in this repo shows the expected format:
+
+```json
+{
+  "episodes": [
+    { "season": 1, "episode": 1, "title": "Pilot" },
+    { "season": 1, "episode": 2, "title": "The Second Episode" }
+  ]
+}
+```
+
+### Applying the renames
+
+Once the dry run looks correct, re-run the exact same command without
+`--dry-run`:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Breaking Bad"
+```
+
+### Useful flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--season N` | (none) | Restrict matching to one season |
+| `--interval` | `5` | Seconds between sampled frames |
+| `--max-scan` | `300` | Only scan the first N seconds of each video |
+| `--threshold` | `80` | Minimum fuzzy-match score (0-100) to accept |
+| `--crop` | `center` | `full` \| `center` \| `lower-third` \| `upper-third` |
+| `--extensions` | `mkv,mp4,m4v,avi` | Video extensions to process |
+| `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
+| `--report path.json` | (none) | Write a JSON summary of every file's outcome |
+| `-v` | off | Verbose/debug logging |
+
+Files with no confident match, or whose target filename collides with
+another file, are never renamed — they're logged as `manual_review` /
+`collision` in the console output and in `--report`, so you can retitle them
+by hand.
+
+## Project layout
+
+```
+titletracer/
+  cli.py        # argument parsing + orchestration
+  video.py       # frame sampling via OpenCV
+  ocr.py         # preprocessing + pytesseract OCR
+  matcher.py     # fuzzy matching + filename building
+  episodes.py    # TVMaze / TMDb / local JSON episode fetchers
+  config.py      # RunConfig dataclass / defaults
+titletracer.py    # `python titletracer.py ...` entry point
+requirements.txt
+sample_episodes.json
+```
