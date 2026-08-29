@@ -30,6 +30,33 @@ Pipeline: **sample frames -> preprocess -> OCR -> fuzzy match -> rename**.
    `--pattern`, checks for collisions, and either prints the plan
    (`--dry-run`) or renames the file.
 
+### Optional: local vision-LLM fallback (`--vlm-verify`)
+
+Tesseract's thresholding-based OCR struggles with stylized title cards —
+text over a busy or animated background, unusual fonts, motion blur (common
+in anime, for example). If a video finishes its OCR scan with no confident
+match, `--vlm-verify` re-scans it and sends each sampled frame to a local
+vision model through [Ollama](https://ollama.com) (`titletracer/vlm.py`),
+asking it to transcribe the title text. That text goes through the same
+fuzzy-matching step as OCR output, so it's held to the same `--threshold`.
+
+This requires Ollama running locally with a vision-capable model pulled:
+
+```bash
+ollama pull llava
+```
+
+Then just add the flag:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Your Show" --vlm-verify --dry-run
+```
+
+It's opt-in and only runs on the subset of files OCR couldn't confidently
+match, since a local model is much slower per frame than OCR. If Ollama
+isn't reachable, requests fail gracefully (logged as warnings) and the file
+falls through to `manual_review` same as if `--vlm-verify` weren't set.
+
 ## Installation
 
 ### System dependency: Tesseract OCR
@@ -115,6 +142,9 @@ python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 | `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
 | `--report path.json` | (none) | Write a JSON summary of every file's outcome |
 | `--debug-dir path/` | (none) | Save every sampled frame (raw + cropped) and its OCR text per video |
+| `--vlm-verify` | off | Fall back to a local Ollama vision model when OCR finds no confident match |
+| `--vlm-model` | `llava` | Ollama vision model to use with `--vlm-verify` |
+| `--vlm-host` | `http://localhost:11434` | Ollama API host |
 | `-v` | off | Verbose/debug logging |
 
 Files with no confident match, or whose target filename collides with
@@ -151,6 +181,7 @@ titletracer/
   ocr.py         # preprocessing + pytesseract OCR
   matcher.py     # fuzzy matching + filename building
   episodes.py    # TVMaze / TMDb / local JSON episode fetchers
+  vlm.py          # optional local Ollama vision-model fallback
   config.py      # RunConfig dataclass / defaults
 titletracer.py    # `python titletracer.py ...` entry point
 requirements.txt

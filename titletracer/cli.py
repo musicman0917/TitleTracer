@@ -14,8 +14,9 @@ import pytesseract
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, RunConfig
 from .episodes import Episode, EpisodeFetchError, get_episode_list
 from .matcher import MatchResult, build_filename, match_episode
-from .ocr import crop_region, extract_text
+from .ocr import clean_text, crop_region, extract_text
 from .video import sample_frames
+from .vlm import transcribe_title
 
 logger = logging.getLogger("titletracer")
 
@@ -71,6 +72,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "directory, one subfolder per video -- use this to see why a title card isn't matching",
     )
     p.add_argument(
+        "--vlm-verify", action="store_true",
+        help="If Tesseract finds no confident match, fall back to asking a local Ollama vision model "
+             "to read the title card (requires Ollama running locally with a vision model pulled)",
+    )
+    p.add_argument("--vlm-model", default="llava", help="Ollama vision model for --vlm-verify (default: llava)")
+    p.add_argument(
+        "--vlm-host", default="http://localhost:11434",
+        help="Ollama API host for --vlm-verify (default: http://localhost:11434)",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Only print planned renames; do not touch any files on disk",
     )
@@ -115,6 +126,25 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
             best = result
         if best.episode is not None:
             break
+
+    if best.episode is None and cfg.vlm_verify:
+        logger.info("  No confident OCR match; asking local VLM (%s via Ollama)", cfg.vlm_model)
+        for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
+            raw_text = transcribe_title(frame.image, cfg.vlm_model, cfg.vlm_host)
+            if not raw_text:
+                continue
+
+            text = clean_text(raw_text)
+            result = match_episode(text, episodes, cfg.threshold)
+            logger.debug(
+                "%s @ %.0fs [vlm]: text=%r match=%s score=%.1f",
+                video_path.name, frame.timestamp_sec, text,
+                result.episode.code if result.episode else None, result.score,
+            )
+            if result.score > best.score:
+                best = result
+            if best.episode is not None:
+                break
 
     return best
 
@@ -232,6 +262,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         tesseract_cmd=args.tesseract_cmd,
         report_path=args.report,
         debug_dir=args.debug_dir,
+        vlm_verify=args.vlm_verify,
+        vlm_model=args.vlm_model,
+        vlm_host=args.vlm_host,
     )
 
     sys.exit(run(cfg))

@@ -38,3 +38,8 @@ class RunConfig:
 
     # Diagnostics
     debug_dir: Optional[Path] = None
+
+    # Local vision-LLM fallback (via Ollama) for frames OCR can't read
+    vlm_verify: bool = False
+    vlm_model: str = "llava"
+    vlm_host: str = "http://localhost:11434"
