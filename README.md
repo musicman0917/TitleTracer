@@ -134,6 +134,29 @@ Once the dry run looks correct, re-run the exact same command without
 python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 ```
 
+### Naming for Jellyfin
+
+`--jellyfin` switches the rename pattern to Jellyfin's own documented
+episode naming scheme (`Show Name SxxExx - Episode Title.ext`), and
+`--organize-seasons` additionally moves each renamed file into a
+`Season NN/` subfolder under the input directory, matching Jellyfin's
+recommended library layout:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Breaking Bad" --jellyfin --organize-seasons --dry-run
+```
+
+which produces, for example:
+
+```
+/path/to/episodes/Season 01/Breaking Bad S01E01 - Pilot.mkv
+```
+
+Both flags are independent -- use `--jellyfin` alone to fix filenames in
+place without moving files, or combine with `--organize-seasons` for a full
+per-season library layout. `--pattern`, if also given explicitly, takes
+priority over `--jellyfin`.
+
 ### Useful flags
 
 | Flag | Default | Description |
@@ -146,6 +169,8 @@ python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 | `--crop` | `center` | `full` \| `center` \| `lower-third` \| `upper-third` |
 | `--extensions` | `mkv,mp4,m4v,avi` | Video extensions to process |
 | `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
+| `--jellyfin` | off | Use Jellyfin's documented naming scheme instead of the default pattern |
+| `--organize-seasons` | off | Move renamed files into `Season NN/` subfolders (Jellyfin's recommended layout) |
 | `--report path.json` | (none) | Write a JSON summary of every file's outcome |
 | `--debug-dir path/` | (none) | Save every sampled frame (raw + cropped) and its OCR text per video |
 | `--vlm-verify` | off | Fall back to a local Ollama vision model when OCR finds no confident match |

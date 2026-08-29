@@ -9,6 +9,10 @@ DEFAULT_EXTENSIONS = [".mkv", ".mp4", ".m4v", ".avi"]
 # Tokens available: {show} {season} {episode} {title}
 DEFAULT_PATTERN = "{show} - S{season:02d}E{episode:02d} - {title}"
 
+# https://jellyfin.org/docs/general/server/media/shows -- Jellyfin's own
+# documented example naming scheme for episode files.
+JELLYFIN_PATTERN = "{show} S{season:02d}E{episode:02d} - {title}"
+
 
 @dataclass
 class RunConfig:
@@ -34,6 +38,7 @@ class RunConfig:
     # Output
     extensions: List[str] = field(default_factory=lambda: list(DEFAULT_EXTENSIONS))
     pattern: str = DEFAULT_PATTERN
+    organize_seasons: bool = False
     dry_run: bool = False
     report_path: Optional[Path] = None
 

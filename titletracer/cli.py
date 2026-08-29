@@ -12,7 +12,7 @@ import cv2
 import pytesseract
 import requests
 
-from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, RunConfig
+from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, JELLYFIN_PATTERN, RunConfig
 from .episodes import Episode, EpisodeFetchError, get_episode_list, search_tvmaze_shows
 from .matcher import MatchResult, build_filename, match_episode
 from .ocr import clean_text, crop_region, extract_text
@@ -70,6 +70,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--pattern", default=DEFAULT_PATTERN,
         help="Rename pattern; available tokens: {show} {season} {episode} {title} "
              f"(default: '{DEFAULT_PATTERN}')",
+    )
+    p.add_argument(
+        "--jellyfin", action="store_true",
+        help=f"Use Jellyfin's documented naming scheme ('{JELLYFIN_PATTERN}') instead of the default "
+             "pattern -- has no effect if --pattern is also given explicitly",
+    )
+    p.add_argument(
+        "--organize-seasons", action="store_true",
+        help="Move renamed files into 'Season NN' subfolders under the input directory, as Jellyfin's "
+             "library layout recommends, instead of renaming them in place",
     )
     p.add_argument("--tesseract-cmd", default=None, help="Path to the tesseract executable, if not on PATH")
     p.add_argument("--report", type=Path, default=None, help="Write a JSON results report to this path")
@@ -249,28 +259,31 @@ def run(cfg: RunConfig) -> int:
             continue
 
         new_name = build_filename(cfg.show_name, result.episode, video.suffix, cfg.pattern)
-        target = video.with_name(new_name)
+        dest_dir = cfg.directory / f"Season {result.episode.season:02d}" if cfg.organize_seasons else cfg.directory
+        target = dest_dir / new_name
+        target_display = str(target.relative_to(cfg.directory)) if cfg.organize_seasons else new_name
 
-        if target.name in used_targets or (target.exists() and target != video):
-            logger.warning("  MANUAL REVIEW: target filename %r already exists/claimed", new_name)
+        if str(target) in used_targets or (target.exists() and target != video):
+            logger.warning("  MANUAL REVIEW: target %r already exists/claimed", target_display)
             report.append({
                 "file": video.name, "status": "collision",
-                "target": new_name, "matched": result.episode.code,
+                "target": target_display, "matched": result.episode.code,
             })
             continue
 
-        used_targets.add(target.name)
+        used_targets.add(str(target))
         logger.info(
             "  Matched %s %r (score %.0f) -> %s",
-            result.episode.code, result.episode.title, result.score, new_name,
+            result.episode.code, result.episode.title, result.score, target_display,
         )
         report.append({
-            "file": video.name, "status": "matched", "target": new_name,
+            "file": video.name, "status": "matched", "target": target_display,
             "episode": result.episode.code, "title": result.episode.title,
             "score": round(result.score, 1),
         })
 
         if not cfg.dry_run:
+            dest_dir.mkdir(parents=True, exist_ok=True)
             video.rename(target)
             logger.info("  Renamed.")
 
@@ -299,6 +312,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         logger.error("Not a directory: %s", args.directory)
         sys.exit(1)
 
+    pattern = args.pattern
+    if args.jellyfin and args.pattern == DEFAULT_PATTERN:
+        pattern = JELLYFIN_PATTERN
+
     cfg = RunConfig(
         directory=args.directory,
         show_name=args.show,
@@ -312,7 +329,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         threshold=args.threshold,
         crop_mode=args.crop,
         extensions=[e.strip() for e in args.extensions.split(",") if e.strip()],
-        pattern=args.pattern,
+        pattern=pattern,
+        organize_seasons=args.organize_seasons,
         dry_run=args.dry_run,
         tesseract_cmd=args.tesseract_cmd,
         report_path=args.report,
