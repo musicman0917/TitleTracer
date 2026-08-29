@@ -35,13 +35,12 @@ class EpisodeFetchError(RuntimeError):
     """Raised when no usable episode list could be obtained."""
 
 
-def fetch_from_tvmaze(show_name: str, timeout: int = 10) -> List[Episode]:
-    resp = requests.get(TVMAZE_SEARCH_URL, params={"q": show_name}, timeout=timeout)
-    resp.raise_for_status()
-    show = resp.json()
-    show_id = show["id"]
-    logger.info("TVMaze matched %r -> id=%s (%s)", show_name, show_id, show.get("name"))
-
+def fetch_tvmaze_episodes_by_id(show_id: int, timeout: int = 10) -> List[Episode]:
+    """Fetch episodes for a known TVMaze show id, bypassing search entirely.
+    Use this once you've confirmed the correct id via TVMAZE_SEARCH_URL --
+    `singlesearch` below picks TVMaze's single best guess for a name, which
+    can silently resolve to the wrong entry (a reboot, a live-action
+    adaptation, a movie) when a show has multiple listings."""
     resp = requests.get(TVMAZE_EPISODES_URL.format(id=show_id), timeout=timeout)
     resp.raise_for_status()
 
@@ -51,8 +50,22 @@ def fetch_from_tvmaze(show_name: str, timeout: int = 10) -> List[Episode]:
         if ep.get("name") and ep.get("season") is not None and ep.get("number") is not None
     ]
     if not episodes:
-        raise EpisodeFetchError(f"TVMaze returned no usable episodes for {show_name!r}")
+        raise EpisodeFetchError(f"TVMaze show id {show_id} has no usable episodes")
     return episodes
+
+
+def fetch_from_tvmaze(show_name: str, timeout: int = 10) -> List[Episode]:
+    resp = requests.get(TVMAZE_SEARCH_URL, params={"q": show_name}, timeout=timeout)
+    resp.raise_for_status()
+    show = resp.json()
+    show_id = show["id"]
+    logger.info(
+        "TVMaze matched %r -> id=%s (%s, premiered %s) -- if this is the wrong "
+        "entry (a reboot/live-action/movie sharing the name), use --tvmaze-id "
+        "with the correct id from https://api.tvmaze.com/search/shows?q=...",
+        show_name, show_id, show.get("name"), show.get("premiered"),
+    )
+    return fetch_tvmaze_episodes_by_id(show_id, timeout=timeout)
 
 
 def fetch_from_tmdb(show_name: str, api_key: str, timeout: int = 10) -> List[Episode]:
@@ -107,11 +120,14 @@ def get_episode_list(
     source: str = "tvmaze",
     local_json: Optional[Path] = None,
     tmdb_api_key: Optional[str] = None,
+    tvmaze_id: Optional[int] = None,
 ) -> List[Episode]:
     """Fetch the episode list from the requested source, falling back to a
     local JSON file (if provided) when the online lookup fails."""
     try:
         if source == "tvmaze":
+            if tvmaze_id is not None:
+                return fetch_tvmaze_episodes_by_id(tvmaze_id)
             return fetch_from_tvmaze(show_name)
         if source == "tmdb":
             api_key = tmdb_api_key or os.environ.get("TMDB_API_KEY")

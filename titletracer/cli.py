@@ -41,6 +41,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "if the online source fails",
     )
     p.add_argument("--tmdb-api-key", default=None, help="TMDb API key (or set the TMDB_API_KEY env var)")
+    p.add_argument(
+        "--tvmaze-id", type=int, default=None,
+        help="Fetch episodes for this exact TVMaze show id (--source tvmaze), bypassing name search. "
+             "Use this when the show name is ambiguous (a reboot/live-action/movie shares the name) -- "
+             "find the right id via https://api.tvmaze.com/search/shows?q=your+show",
+    )
     p.add_argument("--season", type=int, default=None, help="Restrict matching to a single season number")
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
@@ -154,7 +160,7 @@ def run(cfg: RunConfig) -> int:
         pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
 
     try:
-        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key)
+        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, cfg.tvmaze_id)
     except EpisodeFetchError as exc:
         logger.error("Could not obtain an episode list: %s", exc)
         return 1
@@ -251,6 +257,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         source=args.source,
         local_json=args.episodes_json,
         tmdb_api_key=args.tmdb_api_key,
+        tvmaze_id=args.tvmaze_id,
         season=args.season,
         interval_sec=args.interval,
         max_scan_sec=args.max_scan,

@@ -133,6 +133,7 @@ python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 
 | Flag | Default | Description |
 |---|---|---|
+| `--tvmaze-id N` | (none) | Fetch episodes for this exact TVMaze show id, bypassing name search |
 | `--season N` | (none) | Restrict matching to one season |
 | `--interval` | `5` | Seconds between sampled frames |
 | `--max-scan` | `300` | Only scan the first N seconds of each video |
@@ -170,6 +171,27 @@ sample point, plus logs the OCR text read at each timestamp. Open a few of
 the `_raw.png` files around where you expect the title card to appear —
 if it isn't there, increase `--max-scan`; if it's there but outside the
 white box in `_crop.png`, switch `--crop` to `full`, `lower-third`, or
+`upper-third`.
+
+If the debug log shows OCR reading real, legible title text at high
+confidence but it still won't match anything, the problem usually isn't
+OCR — it's the episode list. `--show "Name"` uses TVMaze's fuzzy search,
+which returns exactly one best guess; for a show with multiple TVMaze
+listings (a reboot, a live-action adaptation, a movie sharing the name)
+that guess can silently be the wrong entry, quietly giving you the wrong
+(often much shorter) episode list to match against. If `"Loaded N candidate
+episode(s)"` looks far too small for the show, list every TVMaze entry for
+the name and grab the right id:
+
+```bash
+curl "https://api.tvmaze.com/search/shows?q=Your+Show+Name"
+```
+
+then pin it explicitly:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Your Show" --tvmaze-id 1234 --dry-run
+```
 `upper-third` to match where your show actually places its title text.
 
 ## Project layout

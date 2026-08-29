@@ -19,6 +19,7 @@ class RunConfig:
     source: str = "tvmaze"  # "tvmaze" | "tmdb" | "local"
     local_json: Optional[Path] = None
     tmdb_api_key: Optional[str] = None
+    tvmaze_id: Optional[int] = None
     season: Optional[int] = None
 
     # Frame sampling
