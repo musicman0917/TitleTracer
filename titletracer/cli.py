@@ -10,9 +10,10 @@ from typing import List, Optional
 
 import cv2
 import pytesseract
+import requests
 
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, RunConfig
-from .episodes import Episode, EpisodeFetchError, get_episode_list
+from .episodes import Episode, EpisodeFetchError, get_episode_list, search_tvmaze_shows
 from .matcher import MatchResult, build_filename, match_episode
 from .ocr import clean_text, crop_region, extract_text
 from .video import sample_frames
@@ -155,12 +156,59 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
     return best
 
 
+def resolve_tvmaze_id(show_name: str) -> Optional[int]:
+    """Search TVMaze for `show_name`. A unique match is used silently; an
+    ambiguous one (a reboot, a live-action adaptation, a movie sharing the
+    name) is shown to the user to pick from -- or, outside a terminal, the
+    top-ranked match is used with a loud warning so the run doesn't hang.
+    Returns None on search failure or no matches, letting the caller fall
+    back to TVMaze's own singlesearch."""
+    try:
+        matches = search_tvmaze_shows(show_name)
+    except (requests.RequestException, EpisodeFetchError) as exc:
+        logger.warning("TVMaze show search failed (%s); falling back to singlesearch", exc)
+        return None
+
+    if not matches:
+        return None
+    if len(matches) == 1:
+        m = matches[0]
+        logger.info("TVMaze matched %r -> id=%s (%s, premiered %s)", show_name, m.id, m.name, m.premiered)
+        return m.id
+
+    print(f"Multiple TVMaze shows match {show_name!r}:")
+    for i, m in enumerate(matches, 1):
+        print(f"  {i}) id={m.id:<7} {m.name:<35} {m.show_type or '?':<12} "
+              f"premiered={m.premiered or '?':<12} network={m.network or '?'}")
+
+    if not sys.stdin.isatty():
+        top = matches[0]
+        logger.warning(
+            "Not running interactively -- auto-selecting the top match (id=%s). "
+            "Re-run with --tvmaze-id to pin a different one.", top.id,
+        )
+        return top.id
+
+    while True:
+        choice = input(f"Select a show [1-{len(matches)}] (or 'q' to quit): ").strip().lower()
+        if choice in ("q", "quit"):
+            print("Cancelled.")
+            sys.exit(1)
+        if choice.isdigit() and 1 <= int(choice) <= len(matches):
+            return matches[int(choice) - 1].id
+        print("Invalid selection, try again.")
+
+
 def run(cfg: RunConfig) -> int:
     if cfg.tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
 
+    tvmaze_id = cfg.tvmaze_id
+    if cfg.source == "tvmaze" and tvmaze_id is None:
+        tvmaze_id = resolve_tvmaze_id(cfg.show_name)
+
     try:
-        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, cfg.tvmaze_id)
+        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, tvmaze_id)
     except EpisodeFetchError as exc:
         logger.error("Could not obtain an episode list: %s", exc)
         return 1

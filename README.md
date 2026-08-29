@@ -20,7 +20,12 @@ Pipeline: **sample frames -> preprocess -> OCR -> fuzzy match -> rename**.
 3. **Episode list** (`titletracer/episodes.py`) — fetched from TVMaze (no key
    required) or TMDb (`--tmdb-api-key`), or loaded from a local JSON file.
    The online source falls back to `--episodes-json` automatically if the
-   request fails.
+   request fails. Show names aren't always unique on TVMaze (a reboot, a
+   live-action adaptation, a movie can share a name) — if `--show` matches
+   more than one TVMaze listing, the tool lists every candidate and asks
+   you to pick (or auto-picks the top-ranked one with a warning if it isn't
+   running in a terminal). Pass `--tvmaze-id` to skip the prompt entirely
+   once you know the right id.
 4. **Fuzzy matching** (`titletracer/matcher.py`) — normalizes and compares the
    OCR text against every candidate title using RapidFuzz's
    `token_sort_ratio`. A match is only accepted if it clears `--threshold`
@@ -192,7 +197,11 @@ then pin it explicitly:
 ```bash
 python3 titletracer.py /path/to/episodes --show "Your Show" --tvmaze-id 1234 --dry-run
 ```
-`upper-third` to match where your show actually places its title text.
+
+Since the tool now lists ambiguous TVMaze matches and prompts interactively
+(or auto-picks the top match with a warning when run non-interactively),
+this is mostly useful for scripting/automation where you want to pin the
+id up front and skip the prompt.
 
 ## Project layout
 

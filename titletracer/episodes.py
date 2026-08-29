@@ -13,6 +13,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 TVMAZE_SEARCH_URL = "https://api.tvmaze.com/singlesearch/shows"
+TVMAZE_MULTISEARCH_URL = "https://api.tvmaze.com/search/shows"
 TVMAZE_EPISODES_URL = "https://api.tvmaze.com/shows/{id}/episodes"
 
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/tv"
@@ -33,6 +34,44 @@ class Episode:
 
 class EpisodeFetchError(RuntimeError):
     """Raised when no usable episode list could be obtained."""
+
+
+@dataclass(frozen=True)
+class ShowMatch:
+    """One candidate from a TVMaze name search -- a show name is often not
+    unique (reboots, live-action adaptations, movies), so callers may need
+    to show these to a human rather than picking one automatically."""
+    id: int
+    name: str
+    premiered: Optional[str]
+    show_type: Optional[str]
+    network: Optional[str]
+    score: float
+
+
+def search_tvmaze_shows(show_name: str, timeout: int = 10) -> List[ShowMatch]:
+    """List every TVMaze show matching `show_name`, ranked by TVMaze's own
+    relevance score. Unlike singlesearch (which silently returns just one
+    best guess), this lets a caller disambiguate."""
+    resp = requests.get(TVMAZE_MULTISEARCH_URL, params={"q": show_name}, timeout=timeout)
+    resp.raise_for_status()
+
+    matches = []
+    for item in resp.json():
+        show = item.get("show") or {}
+        if "id" not in show:
+            continue
+        channel = show.get("network") or show.get("webChannel") or {}
+        matches.append(ShowMatch(
+            id=show["id"],
+            name=show.get("name") or "?",
+            premiered=show.get("premiered"),
+            show_type=show.get("type"),
+            network=channel.get("name"),
+            score=float(item.get("score", 0.0)),
+        ))
+    matches.sort(key=lambda m: m.score, reverse=True)
+    return matches
 
 
 def fetch_tvmaze_episodes_by_id(show_id: int, timeout: int = 10) -> List[Episode]:
