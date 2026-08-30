@@ -49,3 +49,4 @@ class RunConfig:
     vlm_verify: bool = False
     vlm_model: str = "llava"
     vlm_host: str = "http://localhost:11434"
+    vlm_max_frames: int = 15

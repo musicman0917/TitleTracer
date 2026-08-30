@@ -99,6 +99,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Ollama API host for --vlm-verify (default: http://localhost:11434)",
     )
     p.add_argument(
+        "--vlm-max-frames", type=int, default=15,
+        help="Max frames to send to the VLM per file before giving up (default: 15) -- each call is "
+             "slow, so this bounds how long a single unmatched file can hang the run",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Only print planned renames; do not touch any files on disk",
     )
@@ -145,8 +150,17 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
             break
 
     if best.episode is None and cfg.vlm_verify:
-        logger.info("  No confident OCR match; asking local VLM (%s via Ollama)", cfg.vlm_model)
+        logger.info(
+            "  No confident OCR match; asking local VLM (%s via Ollama), up to %d frame(s)",
+            cfg.vlm_model, cfg.vlm_max_frames,
+        )
+        attempts = 0
         for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
+            if attempts >= cfg.vlm_max_frames:
+                logger.info("  VLM frame cap (%d) reached; giving up on this file", cfg.vlm_max_frames)
+                break
+            attempts += 1
+
             raw_text = transcribe_title(frame.image, cfg.vlm_model, cfg.vlm_host)
             if not raw_text:
                 continue
@@ -338,6 +352,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         vlm_verify=args.vlm_verify,
         vlm_model=args.vlm_model,
         vlm_host=args.vlm_host,
+        vlm_max_frames=args.vlm_max_frames,
     )
 
     sys.exit(run(cfg))

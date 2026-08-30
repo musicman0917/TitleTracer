@@ -61,6 +61,9 @@ It's opt-in and only runs on the subset of files OCR couldn't confidently
 match, since a local model is much slower per frame than OCR. If Ollama
 isn't reachable, requests fail gracefully (logged as warnings) and the file
 falls through to `manual_review` same as if `--vlm-verify` weren't set.
+`--vlm-max-frames` (default 15) bounds how many frames are tried per file
+before giving up on it, so a long run of unmatched files can't stall for
+minutes each on the local model.
 
 ## Installation
 
@@ -176,6 +179,7 @@ priority over `--jellyfin`.
 | `--vlm-verify` | off | Fall back to a local Ollama vision model when OCR finds no confident match |
 | `--vlm-model` | `llava` | Ollama vision model to use with `--vlm-verify` |
 | `--vlm-host` | `http://localhost:11434` | Ollama API host |
+| `--vlm-max-frames` | `15` | Max frames sent to the VLM per file before giving up on it |
 | `-v` | off | Verbose/debug logging |
 
 Files with no confident match, or whose target filename collides with
