@@ -143,12 +143,18 @@ def fetch_from_tmdb(show_name: str, api_key: str, timeout: int = 10) -> List[Epi
 def load_from_json(path: Path) -> List[Episode]:
     """Load episodes from a local JSON file, either a bare list of
     {"season", "episode", "title"} objects or {"episodes": [...]}."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    records = data["episodes"] if isinstance(data, dict) and "episodes" in data else data
-    episodes = [
-        Episode(season=int(r["season"]), number=int(r["episode"]), title=str(r["title"]))
-        for r in records
-    ]
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        records = data["episodes"] if isinstance(data, dict) and "episodes" in data else data
+        episodes = [
+            Episode(season=int(r["season"]), number=int(r["episode"]), title=str(r["title"]))
+            for r in records
+        ]
+    except OSError as exc:
+        raise EpisodeFetchError(f"Could not read local episode file {path}: {exc}") from exc
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise EpisodeFetchError(f"Local episode file {path} is malformed: {exc}") from exc
+
     if not episodes:
         raise EpisodeFetchError(f"Local episode file {path} contained no episodes")
     return episodes

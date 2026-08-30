@@ -1,5 +1,5 @@
-"""Command-line entry point: wires together episode fetching, frame
-sampling, OCR, fuzzy matching, and (optionally) the actual renaming."""
+"""Command-line entry point: wires together episode/movie fetching and
+the shared scan/apply engine."""
 
 import argparse
 import json
@@ -8,17 +8,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-import cv2
 import pytesseract
 import requests
 
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, JELLYFIN_PATTERN, RunConfig
-from .episodes import Episode, EpisodeFetchError, get_episode_list, search_tvmaze_shows
-from .gaps import FileOutcome, infer_gaps
-from .matcher import MatchResult, build_filename, match_episode
-from .ocr import clean_text, crop_region, extract_text
-from .video import sample_frames
-from .vlm import transcribe_title
+from .engine import apply_plan, find_video_files, scan_movie, scan_tv
+from .episodes import EpisodeFetchError, get_episode_list, search_tvmaze_shows
+from .movies import MovieLookupError, load_overrides
 
 logger = logging.getLogger("titletracer")
 
@@ -27,29 +23,42 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="titletracer",
         description=(
-            "Detect episode title cards in ripped video files via OCR and "
-            "rename them to match an official episode list."
+            "Detect episode/movie title cards in ripped video files via OCR and "
+            "rename them to match official metadata."
         ),
     )
     p.add_argument("directory", type=Path, help="Directory containing video files to process")
-    p.add_argument("--show", required=True, help="Show name (used for API lookup and in the filename)")
+    p.add_argument(
+        "--mode", choices=["tv", "movie"], default="tv",
+        help="tv: match against an episode list for one show (default). "
+             "movie: identify each file independently from its filename via TMDb",
+    )
+    p.add_argument(
+        "--show", default=None,
+        help="Show name (required for --mode tv; used for API lookup and in the filename)",
+    )
     p.add_argument(
         "--source", choices=["tvmaze", "tmdb", "local"], default="tvmaze",
-        help="Episode list source (default: tvmaze)",
+        help="Episode list source for --mode tv (default: tvmaze)",
     )
     p.add_argument(
         "--episodes-json", type=Path, default=None,
-        help="Local JSON episode list; required with --source local, otherwise used as a fallback "
-             "if the online source fails",
+        help="Local JSON episode list (--mode tv); required with --source local, otherwise used as "
+             "a fallback if the online source fails",
+    )
+    p.add_argument(
+        "--movies-json", type=Path, default=None,
+        help="Local JSON of per-filename overrides for --mode movie: "
+             '{"File1.mkv": {"title": "...", "year": 1999}, ...}',
     )
     p.add_argument("--tmdb-api-key", default=None, help="TMDb API key (or set the TMDB_API_KEY env var)")
     p.add_argument(
         "--tvmaze-id", type=int, default=None,
-        help="Fetch episodes for this exact TVMaze show id (--source tvmaze), bypassing name search. "
-             "Use this when the show name is ambiguous (a reboot/live-action/movie shares the name) -- "
-             "find the right id via https://api.tvmaze.com/search/shows?q=your+show",
+        help="Fetch episodes for this exact TVMaze show id (--mode tv, --source tvmaze), bypassing "
+             "name search. Use this when the show name is ambiguous (a reboot/live-action/movie "
+             "shares the name) -- find the right id via https://api.tvmaze.com/search/shows?q=your+show",
     )
-    p.add_argument("--season", type=int, default=None, help="Restrict matching to a single season number")
+    p.add_argument("--season", type=int, default=None, help="Restrict matching to a single season number (--mode tv)")
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
         "--max-scan", type=float, default=300.0,
@@ -57,11 +66,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--threshold", type=float, default=80.0,
-        help="Minimum fuzzy-match confidence 0-100 to accept a match (default: 80)",
+        help="Minimum fuzzy-match confidence 0-100 to accept a match (default: 80, --mode tv)",
     )
     p.add_argument(
         "--crop", choices=["full", "center", "lower-third", "upper-third"], default="center",
-        help="Region of the frame to run OCR on (default: center)",
+        help="Region of the frame to run OCR on (default: center, --mode tv)",
     )
     p.add_argument(
         "--extensions", default=",".join(e.lstrip(".") for e in DEFAULT_EXTENSIONS),
@@ -69,37 +78,42 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--pattern", default=DEFAULT_PATTERN,
-        help="Rename pattern; available tokens: {show} {season} {episode} {title} "
+        help="Rename pattern for --mode tv; available tokens: {show} {season} {episode} {title} "
              f"(default: '{DEFAULT_PATTERN}')",
     )
     p.add_argument(
         "--jellyfin", action="store_true",
-        help=f"Use Jellyfin's documented naming scheme ('{JELLYFIN_PATTERN}') instead of the default "
-             "pattern -- has no effect if --pattern is also given explicitly",
+        help=f"--mode tv: use Jellyfin's documented naming scheme ('{JELLYFIN_PATTERN}') instead of "
+             "the default pattern -- has no effect if --pattern is also given explicitly. "
+             "--mode movie always uses Jellyfin's 'Title (Year)' convention",
     )
     p.add_argument(
         "--organize-seasons", action="store_true",
-        help="Move renamed files into 'Season NN' subfolders under the input directory, as Jellyfin's "
-             "library layout recommends, instead of renaming them in place",
+        help="--mode tv: move renamed files into 'Season NN' subfolders. --mode movie: move each "
+             "into its own 'Title (Year)/' subfolder. Either way, matches Jellyfin's recommended "
+             "library layout instead of renaming files in place",
     )
     p.add_argument(
         "--fill-gaps", action="store_true",
-        help="For a file with no confident title-card match, if its position in the (sorted) file "
-             "list sits unambiguously between two confidently-matched episodes with a numeric gap "
-             "matching the number of unmatched files between them, rename it too. Without this flag "
-             "such files are only annotated with the same suggestion and left for manual review",
+        help="--mode tv: for a file with no confident title-card match, if its position in the "
+             "(sorted) file list sits unambiguously between two confidently-matched episodes with a "
+             "numeric gap matching the number of unmatched files between them, rename it too. "
+             "Without this flag such files are only annotated with the same suggestion and left for "
+             "manual review",
     )
     p.add_argument("--tesseract-cmd", default=None, help="Path to the tesseract executable, if not on PATH")
     p.add_argument("--report", type=Path, default=None, help="Write a JSON results report to this path")
     p.add_argument(
         "--debug-dir", type=Path, default=None,
-        help="Save every sampled frame (raw + the exact --crop region used) and its OCR text to this "
-             "directory, one subfolder per video -- use this to see why a title card isn't matching",
+        help="--mode tv: save every sampled frame (raw + the exact --crop region used) and its OCR "
+             "text to this directory, one subfolder per video -- use this to see why a title card "
+             "isn't matching",
     )
     p.add_argument(
         "--vlm-verify", action="store_true",
-        help="If Tesseract finds no confident match, fall back to asking a local Ollama vision model "
-             "to read the title card (requires Ollama running locally with a vision model pulled)",
+        help="--mode tv: if Tesseract finds no confident match, fall back to asking a local Ollama "
+             "vision model to read the title card (requires Ollama running locally with a vision "
+             "model pulled)",
     )
     p.add_argument("--vlm-model", default="llava", help="Ollama vision model for --vlm-verify (default: llava)")
     p.add_argument(
@@ -119,82 +133,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def find_video_files(directory: Path, extensions: List[str]) -> List[Path]:
-    exts = {("." + e.lstrip(".")).lower() for e in extensions}
-    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in exts)
-
-
-def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> MatchResult:
-    """Scan a single video for its title card, stopping as soon as a
-    confident match is found (or the scan window is exhausted)."""
-    best = MatchResult(None, 0.0, "")
-
-    debug_video_dir = None
-    if cfg.debug_dir:
-        debug_video_dir = cfg.debug_dir / video_path.stem
-        debug_video_dir.mkdir(parents=True, exist_ok=True)
-
-    for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
-        text, ocr_conf = extract_text(frame.image, cfg.crop_mode)
-
-        if debug_video_dir is not None:
-            stamp = f"{frame.timestamp_sec:06.1f}s"
-            cv2.imwrite(str(debug_video_dir / f"{stamp}_raw.png"), frame.image)
-            cv2.imwrite(str(debug_video_dir / f"{stamp}_crop.png"), crop_region(frame.image, cfg.crop_mode))
-            logger.info("  @ %s  ocr=%r  ocr_conf=%.0f", stamp, text, ocr_conf)
-
-        if not text:
-            continue
-
-        result = match_episode(text, episodes, cfg.threshold)
-        logger.debug(
-            "%s @ %.0fs: ocr=%r ocr_conf=%.0f match=%s score=%.1f",
-            video_path.name, frame.timestamp_sec, text, ocr_conf,
-            result.episode.code if result.episode else None, result.score,
-        )
-        if result.score > best.score:
-            best = result
-        if best.episode is not None:
-            break
-
-    if best.episode is None and cfg.vlm_verify:
-        logger.info(
-            "  No confident OCR match; asking local VLM (%s via Ollama), up to %d frame(s)",
-            cfg.vlm_model, cfg.vlm_max_frames,
-        )
-        attempts = 0
-        for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
-            if attempts >= cfg.vlm_max_frames:
-                logger.info("  VLM frame cap (%d) reached; giving up on this file", cfg.vlm_max_frames)
-                break
-            attempts += 1
-
-            raw_text = transcribe_title(frame.image, cfg.vlm_model, cfg.vlm_host)
-            if not raw_text:
-                continue
-
-            text = clean_text(raw_text)
-            result = match_episode(text, episodes, cfg.threshold)
-            logger.debug(
-                "%s @ %.0fs [vlm]: text=%r match=%s score=%.1f",
-                video_path.name, frame.timestamp_sec, text,
-                result.episode.code if result.episode else None, result.score,
-            )
-            if result.score > best.score:
-                best = result
-            if best.episode is not None:
-                break
-
-    return best
-
-
-def resolve_tvmaze_id(show_name: str) -> Optional[int]:
+def resolve_tvmaze_id(show_name: str, interactive: bool = True) -> Optional[int]:
     """Search TVMaze for `show_name`. A unique match is used silently; an
     ambiguous one (a reboot, a live-action adaptation, a movie sharing the
-    name) is shown to the user to pick from -- or, outside a terminal, the
-    top-ranked match is used with a loud warning so the run doesn't hang.
-    Returns None on search failure or no matches, letting the caller fall
-    back to TVMaze's own singlesearch."""
+    name) is shown to the user to pick from when `interactive` (a real
+    terminal) -- otherwise the top-ranked match is used with a loud
+    warning so the run doesn't hang. Returns None on search failure or no
+    matches, letting the caller fall back to TVMaze's own singlesearch."""
     try:
         matches = search_tvmaze_shows(show_name)
     except (requests.RequestException, EpisodeFetchError) as exc:
@@ -213,7 +158,7 @@ def resolve_tvmaze_id(show_name: str) -> Optional[int]:
         print(f"  {i}) id={m.id:<7} {m.name:<35} {m.show_type or '?':<12} "
               f"premiered={m.premiered or '?':<12} network={m.network or '?'}")
 
-    if not sys.stdin.isatty():
+    if not interactive or not sys.stdin.isatty():
         top = matches[0]
         logger.warning(
             "Not running interactively -- auto-selecting the top match (id=%s). "
@@ -231,125 +176,95 @@ def resolve_tvmaze_id(show_name: str) -> Optional[int]:
         print("Invalid selection, try again.")
 
 
-def run(cfg: RunConfig) -> int:
-    if cfg.tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
-
+def build_plan_tv(cfg: RunConfig, on_progress=None):
+    """Resolve the episode list and scan every video, returning a plan.
+    Raises RuntimeError with a human-readable message on setup failure
+    (no episode list, no video files) -- used by both the CLI and the GUI."""
     tvmaze_id = cfg.tvmaze_id
     if cfg.source == "tvmaze" and tvmaze_id is None:
-        tvmaze_id = resolve_tvmaze_id(cfg.show_name)
+        tvmaze_id = resolve_tvmaze_id(cfg.show_name, cfg.interactive)
 
     try:
         episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, tvmaze_id)
     except EpisodeFetchError as exc:
-        logger.error("Could not obtain an episode list: %s", exc)
-        return 1
+        raise RuntimeError(f"Could not obtain an episode list: {exc}") from exc
 
     if cfg.season is not None:
         episodes = [e for e in episodes if e.season == cfg.season]
     if not episodes:
-        logger.error("No episodes available to match against (check --show / --season / episode source)")
-        return 1
+        raise RuntimeError("No episodes available to match against (check show name / season / episode source)")
     logger.info("Loaded %d candidate episode(s) for %r", len(episodes), cfg.show_name)
 
     videos = find_video_files(cfg.directory, cfg.extensions)
     if not videos:
-        logger.error("No video files found in %s", cfg.directory)
+        raise RuntimeError(f"No video files found in {cfg.directory}")
+
+    return scan_tv(cfg, episodes, videos, on_progress=on_progress)
+
+
+def build_plan_movie(cfg: RunConfig, on_progress=None):
+    videos = find_video_files(cfg.directory, cfg.extensions)
+    if not videos:
+        raise RuntimeError(f"No video files found in {cfg.directory}")
+
+    try:
+        overrides = load_overrides(cfg.movies_json) if cfg.movies_json else {}
+    except MovieLookupError as exc:
+        raise RuntimeError(str(exc)) from exc
+    return scan_movie(cfg, videos, overrides, on_progress=on_progress)
+
+
+def run_tv(cfg: RunConfig) -> int:
+    try:
+        plan = build_plan_tv(cfg)
+    except RuntimeError as exc:
+        logger.error("%s", exc)
         return 1
+    return finish(cfg, plan)
 
-    outcomes: List[FileOutcome] = []
-    report = []
 
-    for video in videos:
-        logger.info("Processing %s", video.name)
-        try:
-            result = process_video(video, episodes, cfg)
-        except IOError as exc:
-            logger.error("  Skipping (could not read video): %s", exc)
-            report.append({"file": video.name, "status": "error", "reason": str(exc)})
-            continue
-        outcomes.append(FileOutcome(video=video, result=result))
+def run_movie(cfg: RunConfig) -> int:
+    try:
+        plan = build_plan_movie(cfg)
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        return 1
+    return finish(cfg, plan)
 
-    # Files with no title-card match are only inferred from their position
-    # relative to *successfully-read* neighbors -- an errored/unreadable
-    # file is excluded above rather than treated as a known gap, so it
-    # can't be silently bridged over.
-    infer_gaps(outcomes, episodes)
 
-    used_targets = set()
+def finish(cfg: RunConfig, plan) -> int:
+    """Shared reporting/apply tail for both modes."""
     inferred_count = 0
-
-    for fo in outcomes:
-        video, result = fo.video, fo.result
-        episode = result.episode
-        applied_inference = False
-
-        if episode is None and cfg.fill_gaps and fo.inferred_episode is not None:
-            episode = fo.inferred_episode
-            applied_inference = True
-
-        if episode is None:
-            hint = ""
-            if fo.inferred_episode is not None:
-                hint = (
-                    f" -- possible: {fo.inferred_episode.code} {fo.inferred_episode.title!r} "
-                    f"({fo.inferred_note}); re-run with --fill-gaps to apply automatically"
-                )
-            logger.warning(
-                "  MANUAL REVIEW: no confident match (best score %.0f, ocr=%r)%s",
-                result.score, result.ocr_text, hint,
-            )
-            entry = {
-                "file": video.name, "status": "manual_review",
-                "best_score": round(result.score, 1), "ocr_text": result.ocr_text,
-            }
-            if fo.inferred_episode is not None:
-                entry["suggested_episode"] = fo.inferred_episode.code
-                entry["suggested_title"] = fo.inferred_episode.title
-            report.append(entry)
-            continue
-
-        new_name = build_filename(cfg.show_name, episode, video.suffix, cfg.pattern)
-        dest_dir = cfg.directory / f"Season {episode.season:02d}" if cfg.organize_seasons else cfg.directory
-        target = dest_dir / new_name
-        target_display = str(target.relative_to(cfg.directory)) if cfg.organize_seasons else new_name
-
-        if str(target) in used_targets or (target.exists() and target != video):
-            logger.warning("  MANUAL REVIEW: target %r already exists/claimed", target_display)
-            report.append({
-                "file": video.name, "status": "collision",
-                "target": target_display, "matched": episode.code,
-            })
-            continue
-
-        used_targets.add(str(target))
-        if applied_inference:
+    for item in plan:
+        if item.status == "manual_review":
+            hint = f" -- {item.note}" if item.note else ""
+            logger.warning("  MANUAL REVIEW: %s%s", item.video.name, hint)
+        elif item.status == "collision":
+            logger.warning("  MANUAL REVIEW: %s -> target %r already exists/claimed", item.video.name, item.target_display)
+        elif item.status == "matched_inferred":
             inferred_count += 1
             logger.info(
-                "  Inferred %s %r [POSITION-INFERRED, not confirmed by title card] -> %s",
-                episode.code, episode.title, target_display,
+                "  Inferred %s [POSITION-INFERRED, not confirmed by title card] -> %s",
+                item.label, item.target_display,
             )
-        else:
-            logger.info(
-                "  Matched %s %r (score %.0f) -> %s",
-                episode.code, episode.title, result.score, target_display,
-            )
-        report.append({
-            "file": video.name, "status": "matched_inferred" if applied_inference else "matched",
-            "target": target_display, "episode": episode.code, "title": episode.title,
-            "score": round(result.score, 1),
-        })
+        elif item.status == "matched":
+            logger.info("  Matched %s (score %.0f) -> %s", item.label, item.score, item.target_display)
 
-        if not cfg.dry_run:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            video.rename(target)
-            logger.info("  Renamed.")
+    if not cfg.dry_run:
+        apply_plan(plan, cfg.directory, dry_run=False)
 
     if cfg.report_path:
+        report = [
+            {
+                "file": item.video.name, "status": item.status, "target": item.target_display,
+                "label": item.label, "score": round(item.score, 1), "note": item.note,
+            }
+            for item in plan
+        ]
         cfg.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         logger.info("Wrote report to %s", cfg.report_path)
 
-    manual = [r for r in report if r["status"] not in ("matched", "matched_inferred")]
+    manual = [item for item in plan if item.status not in ("matched", "matched_inferred")]
     if manual:
         logger.warning("%d file(s) need manual review; see the report above for details.", len(manual))
     if inferred_count:
@@ -374,6 +289,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not args.directory.is_dir():
         logger.error("Not a directory: %s", args.directory)
         sys.exit(1)
+    if args.mode == "tv" and not args.show:
+        logger.error("--show is required for --mode tv")
+        sys.exit(1)
+
+    if args.tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = args.tesseract_cmd
 
     pattern = args.pattern
     if args.jellyfin and args.pattern == DEFAULT_PATTERN:
@@ -382,8 +303,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     cfg = RunConfig(
         directory=args.directory,
         show_name=args.show,
+        mode=args.mode,
         source=args.source,
         local_json=args.episodes_json,
+        movies_json=args.movies_json,
         tmdb_api_key=args.tmdb_api_key,
         tvmaze_id=args.tvmaze_id,
         season=args.season,
@@ -405,6 +328,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         vlm_max_frames=args.vlm_max_frames,
     )
 
+    run = run_tv if cfg.mode == "tv" else run_movie
     sys.exit(run(cfg))
 
 

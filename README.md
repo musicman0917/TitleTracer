@@ -1,10 +1,39 @@
 # TitleTracer
 
-A local command-line tool that scans ripped TV episode video files for their
-title card, OCRs the text, matches it against an official episode list, and
-renames the file accordingly.
+A local tool -- CLI or desktop GUI -- that identifies ripped video files
+and renames them to match official metadata. Two modes:
 
-Pipeline: **sample frames -> preprocess -> OCR -> fuzzy match -> rename**.
+- **TV Show**: scans each episode's title card, OCRs the text, and matches
+  it against an official episode list for one show.
+  Pipeline: **sample frames -> preprocess -> OCR -> fuzzy match -> rename**.
+- **Movie**: each file is identified independently from its filename
+  (cleaned of rip/scene tags) via a TMDb search, since a movies folder is
+  many different films rather than one show's episodes.
+
+## GUI
+
+```bash
+python3 titletracer_gui.py
+```
+
+Built on Tkinter, which ships with Python already -- no extra dependency,
+no server, fully offline apart from the metadata lookups themselves. (On
+some Linux distros Tkinter is a separate package: `sudo apt install
+python3-tk`. It's bundled by default with the python.org Windows/macOS
+installers.)
+
+Pick TV Show or Movie at the top, choose your directory and options, then:
+
+1. **Preview** -- scans every file in a background thread (the window stays
+   responsive) and fills in a results table: file, status, matched
+   title/episode, score, and where it would be renamed to. Nothing on disk
+   is touched yet.
+2. **Apply Renames** -- performs the renames from that same cached plan (no
+   re-scanning) after a confirmation prompt.
+
+The log pane at the bottom shows the same detail the CLI prints, useful for
+seeing *why* a file didn't match. Advanced flags not exposed in the GUI
+(`--debug-dir`, `--vlm-*`, `--tvmaze-id`, etc.) remain available via the CLI.
 
 ## How it works
 
@@ -137,6 +166,55 @@ Once the dry run looks correct, re-run the exact same command without
 python3 titletracer.py /path/to/episodes --show "Breaking Bad"
 ```
 
+## Movie mode
+
+A movies folder isn't one show with an episode list -- it's many
+independent films, each identified on its own. `--mode movie` guesses a
+title (and year, if present) from each file's name, cleaning off common
+rip/scene tags (`1080p`, `BluRay`, `x264`, release-group suffixes, ...),
+then looks it up on TMDb. Title-card OCR isn't used here; the filename is
+usually the only reliable signal for which movie a file even is.
+
+```bash
+python3 titletracer.py /path/to/movies --mode movie --tmdb-api-key YOUR_KEY --dry-run
+# or export TMDB_API_KEY instead of passing --tmdb-api-key
+```
+
+This renames to Jellyfin's own `Title (Year).ext` convention:
+
+```
+The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv  ->  The Matrix (1999).mkv
+```
+
+Add `--organize-seasons` to also put each movie in its own folder (the
+flag name is shared with TV mode, but for movies it means "one folder per
+movie" -- Jellyfin's recommended per-movie library layout):
+
+```
+/path/to/movies/The Matrix (1999)/The Matrix (1999).mkv
+```
+
+If a filename guess is ambiguous, TMDb's matches are listed and you're
+prompted to pick one, the same as the TVMaze show picker in TV mode.
+
+### Local overrides, without a TMDb API key
+
+For files the filename-guesser gets wrong, or for fully offline use, pass
+a local JSON file mapping filenames directly to a title/year, skipping
+TMDb entirely for those files:
+
+```bash
+python3 titletracer.py /path/to/movies --mode movie --movies-json sample_movies.json --dry-run
+```
+
+`sample_movies.json` in this repo shows the expected format:
+
+```json
+{
+  "RandomRip01.mkv": { "title": "Spirited Away", "year": 2001 }
+}
+```
+
 ### Naming for Jellyfin
 
 `--jellyfin` switches the rename pattern to Jellyfin's own documented
@@ -200,6 +278,8 @@ priority over `--jellyfin`.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--mode` | `tv` | `tv` \| `movie` |
+| `--movies-json path.json` | (none) | Per-filename `{title, year}` overrides for `--mode movie` |
 | `--tvmaze-id N` | (none) | Fetch episodes for this exact TVMaze show id, bypassing name search |
 | `--season N` | (none) | Restrict matching to one season |
 | `--interval` | `5` | Seconds between sampled frames |
@@ -273,15 +353,19 @@ id up front and skip the prompt.
 
 ```
 titletracer/
-  cli.py        # argument parsing + orchestration
+  cli.py        # argument parsing + orchestration (TV and movie modes)
+  engine.py      # mode-agnostic scan/apply: PlanItem, scan_tv, scan_movie, apply_plan
   video.py       # frame sampling via OpenCV
   ocr.py         # preprocessing + pytesseract OCR
   matcher.py     # fuzzy matching + filename building
-  episodes.py    # TVMaze / TMDb / local JSON episode fetchers
+  episodes.py    # TVMaze / TMDb / local JSON episode fetchers (TV mode)
+  movies.py       # filename guessing + TMDb movie search (movie mode)
   vlm.py          # optional local Ollama vision-model fallback
   gaps.py         # positional inference for title-card-less episodes
   config.py      # RunConfig dataclass / defaults
-titletracer.py    # `python titletracer.py ...` entry point
+titletracer.py    # `python titletracer.py ...` CLI entry point
+titletracer_gui.py # `python titletracer_gui.py` desktop GUI (Tkinter)
 requirements.txt
 sample_episodes.json
+sample_movies.json
 ```

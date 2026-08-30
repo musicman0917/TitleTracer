@@ -17,14 +17,20 @@ JELLYFIN_PATTERN = "{show} S{season:02d}E{episode:02d} - {title}"
 @dataclass
 class RunConfig:
     directory: Path
-    show_name: str
+    show_name: Optional[str] = None  # required for mode="tv"; unused for mode="movie"
 
-    # Episode list source
+    mode: str = "tv"  # "tv" | "movie"
+    interactive: bool = True  # disambiguation prompts block on input() when True + a real terminal
+
+    # Episode list source (mode="tv")
     source: str = "tvmaze"  # "tvmaze" | "tmdb" | "local"
     local_json: Optional[Path] = None
     tmdb_api_key: Optional[str] = None
     tvmaze_id: Optional[int] = None
     season: Optional[int] = None
+
+    # Movie identification (mode="movie")
+    movies_json: Optional[Path] = None  # per-filename {"title", "year"} overrides
 
     # Frame sampling
     interval_sec: float = 5.0
