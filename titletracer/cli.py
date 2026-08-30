@@ -14,6 +14,7 @@ import requests
 
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, JELLYFIN_PATTERN, RunConfig
 from .episodes import Episode, EpisodeFetchError, get_episode_list, search_tvmaze_shows
+from .gaps import FileOutcome, infer_gaps
 from .matcher import MatchResult, build_filename, match_episode
 from .ocr import clean_text, crop_region, extract_text
 from .video import sample_frames
@@ -80,6 +81,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--organize-seasons", action="store_true",
         help="Move renamed files into 'Season NN' subfolders under the input directory, as Jellyfin's "
              "library layout recommends, instead of renaming them in place",
+    )
+    p.add_argument(
+        "--fill-gaps", action="store_true",
+        help="For a file with no confident title-card match, if its position in the (sorted) file "
+             "list sits unambiguously between two confidently-matched episodes with a numeric gap "
+             "matching the number of unmatched files between them, rename it too. Without this flag "
+             "such files are only annotated with the same suggestion and left for manual review",
     )
     p.add_argument("--tesseract-cmd", default=None, help="Path to the tesseract executable, if not on PATH")
     p.add_argument("--report", type=Path, default=None, help="Write a JSON results report to this path")
@@ -249,7 +257,7 @@ def run(cfg: RunConfig) -> int:
         logger.error("No video files found in %s", cfg.directory)
         return 1
 
-    used_targets = set()
+    outcomes: List[FileOutcome] = []
     report = []
 
     for video in videos:
@@ -260,20 +268,49 @@ def run(cfg: RunConfig) -> int:
             logger.error("  Skipping (could not read video): %s", exc)
             report.append({"file": video.name, "status": "error", "reason": str(exc)})
             continue
+        outcomes.append(FileOutcome(video=video, result=result))
 
-        if result.episode is None:
+    # Files with no title-card match are only inferred from their position
+    # relative to *successfully-read* neighbors -- an errored/unreadable
+    # file is excluded above rather than treated as a known gap, so it
+    # can't be silently bridged over.
+    infer_gaps(outcomes, episodes)
+
+    used_targets = set()
+    inferred_count = 0
+
+    for fo in outcomes:
+        video, result = fo.video, fo.result
+        episode = result.episode
+        applied_inference = False
+
+        if episode is None and cfg.fill_gaps and fo.inferred_episode is not None:
+            episode = fo.inferred_episode
+            applied_inference = True
+
+        if episode is None:
+            hint = ""
+            if fo.inferred_episode is not None:
+                hint = (
+                    f" -- possible: {fo.inferred_episode.code} {fo.inferred_episode.title!r} "
+                    f"({fo.inferred_note}); re-run with --fill-gaps to apply automatically"
+                )
             logger.warning(
-                "  MANUAL REVIEW: no confident match (best score %.0f, ocr=%r)",
-                result.score, result.ocr_text,
+                "  MANUAL REVIEW: no confident match (best score %.0f, ocr=%r)%s",
+                result.score, result.ocr_text, hint,
             )
-            report.append({
+            entry = {
                 "file": video.name, "status": "manual_review",
                 "best_score": round(result.score, 1), "ocr_text": result.ocr_text,
-            })
+            }
+            if fo.inferred_episode is not None:
+                entry["suggested_episode"] = fo.inferred_episode.code
+                entry["suggested_title"] = fo.inferred_episode.title
+            report.append(entry)
             continue
 
-        new_name = build_filename(cfg.show_name, result.episode, video.suffix, cfg.pattern)
-        dest_dir = cfg.directory / f"Season {result.episode.season:02d}" if cfg.organize_seasons else cfg.directory
+        new_name = build_filename(cfg.show_name, episode, video.suffix, cfg.pattern)
+        dest_dir = cfg.directory / f"Season {episode.season:02d}" if cfg.organize_seasons else cfg.directory
         target = dest_dir / new_name
         target_display = str(target.relative_to(cfg.directory)) if cfg.organize_seasons else new_name
 
@@ -281,18 +318,25 @@ def run(cfg: RunConfig) -> int:
             logger.warning("  MANUAL REVIEW: target %r already exists/claimed", target_display)
             report.append({
                 "file": video.name, "status": "collision",
-                "target": target_display, "matched": result.episode.code,
+                "target": target_display, "matched": episode.code,
             })
             continue
 
         used_targets.add(str(target))
-        logger.info(
-            "  Matched %s %r (score %.0f) -> %s",
-            result.episode.code, result.episode.title, result.score, target_display,
-        )
+        if applied_inference:
+            inferred_count += 1
+            logger.info(
+                "  Inferred %s %r [POSITION-INFERRED, not confirmed by title card] -> %s",
+                episode.code, episode.title, target_display,
+            )
+        else:
+            logger.info(
+                "  Matched %s %r (score %.0f) -> %s",
+                episode.code, episode.title, result.score, target_display,
+            )
         report.append({
-            "file": video.name, "status": "matched", "target": target_display,
-            "episode": result.episode.code, "title": result.episode.title,
+            "file": video.name, "status": "matched_inferred" if applied_inference else "matched",
+            "target": target_display, "episode": episode.code, "title": episode.title,
             "score": round(result.score, 1),
         })
 
@@ -305,9 +349,14 @@ def run(cfg: RunConfig) -> int:
         cfg.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         logger.info("Wrote report to %s", cfg.report_path)
 
-    manual = [r for r in report if r["status"] != "matched"]
+    manual = [r for r in report if r["status"] not in ("matched", "matched_inferred")]
     if manual:
         logger.warning("%d file(s) need manual review; see the report above for details.", len(manual))
+    if inferred_count:
+        logger.warning(
+            "%d file(s) were renamed by position inference only (no title card was read) -- "
+            "double-check those names.", inferred_count,
+        )
 
     if cfg.dry_run:
         logger.info("Dry run complete -- no files were renamed. Re-run without --dry-run to apply.")
@@ -345,6 +394,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         extensions=[e.strip() for e in args.extensions.split(",") if e.strip()],
         pattern=pattern,
         organize_seasons=args.organize_seasons,
+        fill_gaps=args.fill_gaps,
         dry_run=args.dry_run,
         tesseract_cmd=args.tesseract_cmd,
         report_path=args.report,

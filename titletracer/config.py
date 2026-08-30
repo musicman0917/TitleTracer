@@ -39,6 +39,7 @@ class RunConfig:
     extensions: List[str] = field(default_factory=lambda: list(DEFAULT_EXTENSIONS))
     pattern: str = DEFAULT_PATTERN
     organize_seasons: bool = False
+    fill_gaps: bool = False
     dry_run: bool = False
     report_path: Optional[Path] = None
 

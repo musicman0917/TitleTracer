@@ -155,6 +155,42 @@ which produces, for example:
 /path/to/episodes/Season 01/Breaking Bad S01E01 - Pilot.mkv
 ```
 
+### Episodes with no title card
+
+Some episodes just don't have a readable title card -- OCR (and the VLM
+fallback) will never find one. Rip title numbering (`Title_28`,
+`Title_29`, ...) almost always tracks episode order, though, so when a
+file with no confident match sits directly between two *confidently
+matched* files in the same season, and the numeric gap between those two
+episodes exactly equals the number of unmatched files between them,
+there's only one episode it can be -- no title-card reading required.
+
+This is always computed and shown as a hint on `manual_review` entries
+(in both the console output and `--report`), e.g.:
+
+```
+MANUAL REVIEW: no confident match (best score 0, ocr='') -- possible: S01E02
+'The Second Episode' (inferred from file order between S01E01 and S01E03);
+re-run with --fill-gaps to apply automatically
+```
+
+Pass `--fill-gaps` to actually apply it -- the file is renamed like any
+other match, but logged and reported as `matched_inferred` rather than
+`matched` so you know it wasn't visually confirmed. A summary line at the
+end always calls out how many files were renamed this way, worth a
+second look before you trust them:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Breaking Bad" --fill-gaps --dry-run
+```
+
+Ambiguous cases -- a gap at the start/end of the list, a gap spanning a
+season boundary, or a gap size that doesn't match the number of unmatched
+files -- are never filled in, with or without the flag; they're left for
+you to sort out by hand. An unreadable/corrupted file (one that errors
+out entirely rather than just lacking a title card) is excluded from this
+inference altogether, so it can't be silently bridged over.
+
 Both flags are independent -- use `--jellyfin` alone to fix filenames in
 place without moving files, or combine with `--organize-seasons` for a full
 per-season library layout. `--pattern`, if also given explicitly, takes
@@ -174,6 +210,7 @@ priority over `--jellyfin`.
 | `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
 | `--jellyfin` | off | Use Jellyfin's documented naming scheme instead of the default pattern |
 | `--organize-seasons` | off | Move renamed files into `Season NN/` subfolders (Jellyfin's recommended layout) |
+| `--fill-gaps` | off | Rename title-card-less files whose position unambiguously pins down the episode |
 | `--report path.json` | (none) | Write a JSON summary of every file's outcome |
 | `--debug-dir path/` | (none) | Save every sampled frame (raw + cropped) and its OCR text per video |
 | `--vlm-verify` | off | Fall back to a local Ollama vision model when OCR finds no confident match |
@@ -242,6 +279,7 @@ titletracer/
   matcher.py     # fuzzy matching + filename building
   episodes.py    # TVMaze / TMDb / local JSON episode fetchers
   vlm.py          # optional local Ollama vision-model fallback
+  gaps.py         # positional inference for title-card-less episodes
   config.py      # RunConfig dataclass / defaults
 titletracer.py    # `python titletracer.py ...` entry point
 requirements.txt
