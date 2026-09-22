@@ -59,7 +59,10 @@ def preprocess(image: np.ndarray, crop_mode: str, upscale: float = 2.0) -> List[
     return _binarize_variants(gray)
 
 
-_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9 '\-:!?.,]")
+# \w is Unicode-aware in Python 3 (matches Kanji/Hiragana/Katakana and other
+# scripts' letters, not just ASCII), which matters once OCR is reading
+# non-English title text -- an ASCII-only allowlist would silently erase it.
+_ALLOWED_CHARS = re.compile(r"[^\w \-:!?.,']", re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -71,10 +74,34 @@ def clean_text(raw: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def validate_ocr_lang(lang: str) -> None:
+    """Log a clear warning if a requested Tesseract language pack isn't
+    installed, rather than letting every frame fail silently with no
+    obvious explanation for why nothing ever matches."""
+    requested = [code for code in lang.split("+") if code]
+    try:
+        installed = set(pytesseract.get_languages(config=""))
+    except pytesseract.TesseractError as exc:
+        logger.debug("Could not list installed Tesseract languages: %s", exc)
+        return
+
+    missing = [code for code in requested if code not in installed]
+    if missing:
+        logger.warning(
+            "Tesseract language pack(s) not installed: %s (have: %s) -- OCR will silently find no "
+            "text for that script. Install via e.g. 'sudo apt-get install tesseract-ocr-%s'.",
+            ", ".join(missing), ", ".join(sorted(installed)) or "none", missing[0],
+        )
+
+
 def extract_text(
-    image: np.ndarray, crop_mode: str = "center", tesseract_config: str = "--psm 6"
+    image: np.ndarray, crop_mode: str = "center", tesseract_config: str = "--psm 6", lang: str = "eng",
 ) -> Tuple[str, float]:
     """Run OCR on the best of several preprocessed variants of `image`.
+
+    `lang` is passed straight to Tesseract's `-l` flag -- e.g. "eng",
+    "jpn", or "eng+jpn" to try both scripts in one pass (requires the
+    matching traineddata installed, e.g. tesseract-ocr-jpn on Debian/Ubuntu).
 
     Returns (cleaned_text, mean_word_confidence) where confidence is
     Tesseract's own 0-100 per-word score averaged over the winning variant.
@@ -85,7 +112,7 @@ def extract_text(
     for candidate in preprocess(image, crop_mode):
         try:
             data = pytesseract.image_to_data(
-                candidate, config=tesseract_config, output_type=pytesseract.Output.DICT
+                candidate, lang=lang, config=tesseract_config, output_type=pytesseract.Output.DICT
             )
         except pytesseract.TesseractError as exc:
             logger.debug("Tesseract failed on a candidate: %s", exc)

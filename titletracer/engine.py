@@ -20,7 +20,7 @@ from .episodes import Episode
 from .gaps import FileOutcome, infer_gaps
 from .matcher import MatchResult, build_filename, match_episode, sanitize_filename
 from .movies import Movie, resolve_movie_match
-from .ocr import clean_text, crop_region, extract_text
+from .ocr import clean_text, crop_region, extract_text, validate_ocr_lang
 from .video import sample_frames
 from .vlm import transcribe_title
 
@@ -63,7 +63,7 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
         debug_video_dir.mkdir(parents=True, exist_ok=True)
 
     for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
-        text, ocr_conf = extract_text(frame.image, cfg.crop_mode)
+        text, ocr_conf = extract_text(frame.image, cfg.crop_mode, lang=cfg.ocr_lang)
 
         if debug_video_dir is not None:
             stamp = f"{frame.timestamp_sec:06.1f}s"
@@ -123,6 +123,8 @@ def scan_tv(
     file order. Positional gap-inference (see gaps.py) runs automatically;
     it's applied to the plan only when cfg.fill_gaps is set, otherwise
     it's just attached as a hint on the manual_review item."""
+    validate_ocr_lang(cfg.ocr_lang)
+
     outcomes: List[FileOutcome] = []
     plan: List[PlanItem] = []
 

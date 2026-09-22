@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 _PROMPT = (
     "This image is a single frame from a TV episode. If it shows the "
-    "episode's title card, transcribe the title text exactly as written "
-    "and nothing else. If there is no legible episode title visible in "
-    "this frame, respond with exactly: NONE"
+    "episode's title card, transcribe the title text exactly as written, "
+    "in its original script/language (do not translate it), and nothing "
+    "else. If there is no legible episode title visible in this frame, "
+    "respond with exactly: NONE"
 )
 
 

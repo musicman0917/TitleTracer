@@ -39,8 +39,13 @@ seeing *why* a file didn't match. Advanced flags not exposed in the GUI
 
 1. **Frame sampling** (`titletracer/video.py`) — seeks directly to timestamps
    every `--interval` seconds (default 5s), stopping at `--max-scan` seconds
-   (default 300s / 5 minutes), since title cards live early in the episode.
-   This avoids decoding the whole file.
+   (default 300s / 5 minutes), since title cards usually live early in the
+   episode. This avoids decoding the whole file. For a show where that
+   isn't reliably true, `--full-scan` (or `--max-scan 0`) removes the cap
+   entirely and scans to the end of each file -- slower, since a file that
+   never shows a title card now pays the cost of scanning all the way
+   through, but it only affects files that would otherwise end up
+   `manual_review` anyway (a match still stops the scan early).
 2. **Preprocessing + OCR** (`titletracer/ocr.py`) — crops to the region where
    title cards usually sit (`--crop`, default `center`), upscales, denoises,
    boosts contrast, and tries a few binarization variants (both text
@@ -112,6 +117,24 @@ choco install tesseract
 
 If `tesseract` isn't on your `PATH`, point the tool at it with
 `--tesseract-cmd /path/to/tesseract`.
+
+The base install only includes English. For a show with untranslated or
+raw/subbed episodes showing a Japanese title card, also install the
+Japanese language pack and pass `--ocr-lang jpn` (or `--ocr-lang eng+jpn`
+to try both scripts in one pass, if some episodes are dubbed and others
+aren't):
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y tesseract-ocr-jpn
+
+# macOS (Homebrew) -- installs all language packs already
+# Windows -- select "Japanese" in the UB-Mannheim installer's component list
+```
+
+If you request a language whose traineddata isn't installed, the tool logs
+a clear warning up front rather than silently finding no text for every
+file.
 
 ### Python dependencies
 
@@ -300,9 +323,11 @@ priority over `--jellyfin`.
 | `--export-episodes-json path.json` | (none) | Resolve the episode list and write it out; exits without scanning |
 | `--season N` | (none) | Restrict matching to one season |
 | `--interval` | `5` | Seconds between sampled frames |
-| `--max-scan` | `300` | Only scan the first N seconds of each video |
+| `--max-scan` | `300` | Only scan the first N seconds of each video (0 = whole video) |
+| `--full-scan` | off | Scan each entire video, no time cap -- same as `--max-scan 0` |
 | `--threshold` | `80` | Minimum fuzzy-match score (0-100) to accept |
 | `--crop` | `center` | `full` \| `center` \| `lower-third` \| `upper-third` |
+| `--ocr-lang` | `eng` | Tesseract language(s), e.g. `jpn` or `eng+jpn` (needs the matching traineddata) |
 | `--extensions` | `mkv,mp4,m4v,avi` | Video extensions to process |
 | `--pattern` | `{show} - S{season:02d}E{episode:02d} - {title}` | Rename template |
 | `--jellyfin` | off | Use Jellyfin's documented naming scheme instead of the default pattern |

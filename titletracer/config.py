@@ -34,12 +34,13 @@ class RunConfig:
 
     # Frame sampling
     interval_sec: float = 5.0
-    max_scan_sec: float = 300.0
+    max_scan_sec: float = 300.0  # <= 0 means no cap -- scan the entire video
 
     # OCR / matching
     crop_mode: str = "center"  # "full" | "center" | "lower-third" | "upper-third"
     threshold: float = 80.0
     tesseract_cmd: Optional[str] = None
+    ocr_lang: str = "eng"  # Tesseract -l value, e.g. "eng", "jpn", or "eng+jpn"
 
     # Output
     extensions: List[str] = field(default_factory=lambda: list(DEFAULT_EXTENSIONS))

@@ -54,7 +54,9 @@ class TitleTracerGUI:
         self.threshold = tk.DoubleVar(value=80.0)
         self.interval = tk.DoubleVar(value=5.0)
         self.max_scan = tk.DoubleVar(value=300.0)
+        self.full_scan = tk.BooleanVar(value=False)
         self.crop = tk.StringVar(value="center")
+        self.ocr_lang = tk.StringVar(value="eng")
         self.jellyfin = tk.BooleanVar(value=True)
         self.organize = tk.BooleanVar(value=True)
         self.fill_gaps = tk.BooleanVar(value=False)
@@ -135,8 +137,12 @@ class TitleTracerGUI:
         ttk.Spinbox(srow1, from_=0, to=100, textvariable=self.threshold, width=6).pack(side="left", padx=(4, 16))
         ttk.Label(srow1, text="Interval (s):").pack(side="left")
         ttk.Spinbox(srow1, from_=1, to=60, textvariable=self.interval, width=6).pack(side="left", padx=(4, 16))
+        self.max_scan_spin = ttk.Spinbox(srow1, from_=10, to=36000, textvariable=self.max_scan, width=6)
         ttk.Label(srow1, text="Max scan (s):").pack(side="left")
-        ttk.Spinbox(srow1, from_=10, to=3600, textvariable=self.max_scan, width=6).pack(side="left", padx=(4, 16))
+        self.max_scan_spin.pack(side="left", padx=(4, 16))
+        ttk.Checkbutton(
+            srow1, text="Full scan (ignore cap)", variable=self.full_scan, command=self._on_full_scan_change,
+        ).pack(side="left", padx=(0, 16))
         ttk.Label(srow1, text="Crop:").pack(side="left")
         ttk.Combobox(
             srow1, textvariable=self.crop, width=12, state="readonly",
@@ -148,6 +154,15 @@ class TitleTracerGUI:
         ttk.Checkbutton(srow2, text="Jellyfin naming", variable=self.jellyfin).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(srow2, text="Organize into subfolders", variable=self.organize).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(srow2, text="VLM fallback (Ollama, TV only)", variable=self.vlm_verify).pack(side="left")
+
+        srow3 = ttk.Frame(shared)
+        srow3.pack(fill="x", pady=2)
+        ttk.Label(srow3, text="OCR language(s):").pack(side="left")
+        ttk.Entry(srow3, textvariable=self.ocr_lang, width=12).pack(side="left", padx=(4, 6))
+        ttk.Label(
+            srow3, text="TV only -- e.g. 'eng', 'jpn', or 'eng+jpn' (needs matching traineddata installed)",
+            foreground="gray",
+        ).pack(side="left")
 
         btn_frame = ttk.Frame(top)
         btn_frame.pack(fill="x", pady=(4, 0))
@@ -184,6 +199,9 @@ class TitleTracerGUI:
         else:
             self.movie_frame.pack(fill="x", pady=(0, 8))
 
+    def _on_full_scan_change(self):
+        self.max_scan_spin["state"] = "disabled" if self.full_scan.get() else "normal"
+
     # -- file/dir pickers -----------------------------------------------------
 
     def _browse_directory(self):
@@ -217,8 +235,9 @@ class TitleTracerGUI:
             tmdb_api_key=self.tmdb_api_key.get() or None,
             season=season,
             interval_sec=self.interval.get(),
-            max_scan_sec=self.max_scan.get(),
+            max_scan_sec=0.0 if self.full_scan.get() else self.max_scan.get(),
             crop_mode=self.crop.get(),
+            ocr_lang=self.ocr_lang.get() or "eng",
             threshold=self.threshold.get(),
             extensions=list(DEFAULT_EXTENSIONS),
             pattern=pattern if self.mode.get() == "tv" else DEFAULT_PATTERN,

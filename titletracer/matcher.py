@@ -9,7 +9,9 @@ from rapidfuzz import fuzz
 
 from .episodes import Episode
 
-_NORMALIZE_RE = re.compile(r"[^a-z0-9 ]")
+# \w is Unicode-aware in Python 3, so this keeps Kanji/Hiragana/Katakana
+# (and other non-ASCII scripts) rather than stripping them as punctuation.
+_NORMALIZE_RE = re.compile(r"[^\w ]", re.UNICODE)
 
 
 def normalize(text: str) -> str:

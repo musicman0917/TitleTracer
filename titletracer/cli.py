@@ -69,7 +69,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
         "--max-scan", type=float, default=300.0,
-        help="Only scan the first N seconds of each video (default: 300 = 5 minutes)",
+        help="Only scan the first N seconds of each video (default: 300 = 5 minutes). 0 (or "
+             "--full-scan) removes the cap and scans the whole file -- slower, but needed for shows "
+             "where the title card can appear late",
+    )
+    p.add_argument(
+        "--full-scan", action="store_true",
+        help="Scan each entire video with no time cap, equivalent to --max-scan 0 -- use when a "
+             "title card can appear well past 5 minutes in",
     )
     p.add_argument(
         "--threshold", type=float, default=80.0,
@@ -78,6 +85,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--crop", choices=["full", "center", "lower-third", "upper-third"], default="center",
         help="Region of the frame to run OCR on (default: center, --mode tv)",
+    )
+    p.add_argument(
+        "--ocr-lang", default="eng",
+        help="Tesseract language(s) for OCR (default: eng, --mode tv). Combine with '+' to try "
+             "multiple scripts in one pass, e.g. 'eng+jpn' for a show mixing dubbed and raw/subbed "
+             "episodes. Each language needs its traineddata installed "
+             "(e.g. 'sudo apt-get install tesseract-ocr-jpn' on Debian/Ubuntu)",
     )
     p.add_argument(
         "--extensions", default=",".join(e.lstrip(".") for e in DEFAULT_EXTENSIONS),
@@ -325,9 +339,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         tvmaze_id=args.tvmaze_id,
         season=args.season,
         interval_sec=args.interval,
-        max_scan_sec=args.max_scan,
+        max_scan_sec=0.0 if args.full_scan else args.max_scan,
         threshold=args.threshold,
         crop_mode=args.crop,
+        ocr_lang=args.ocr_lang,
         extensions=[e.strip() for e in args.extensions.split(",") if e.strip()],
         pattern=pattern,
         organize_seasons=args.organize_seasons,
