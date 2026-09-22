@@ -47,6 +47,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "a fallback if the online source fails",
     )
     p.add_argument(
+        "--export-episodes-json", type=Path, default=None,
+        help="Fetch the episode list for --show (via --source/--tvmaze-id as usual) and write it to "
+             "this path in the same format as sample_episodes.json, then exit without scanning any "
+             "videos. Useful as a starting point to hand-edit titles (e.g. to match a dub's on-screen "
+             "wording rather than the source database's) before using --source local",
+    )
+    p.add_argument(
         "--movies-json", type=Path, default=None,
         help="Local JSON of per-filename overrides for --mode movie: "
              '{"File1.mkv": {"title": "...", "year": 1999}, ...}',
@@ -176,10 +183,9 @@ def resolve_tvmaze_id(show_name: str, interactive: bool = True) -> Optional[int]
         print("Invalid selection, try again.")
 
 
-def build_plan_tv(cfg: RunConfig, on_progress=None):
-    """Resolve the episode list and scan every video, returning a plan.
-    Raises RuntimeError with a human-readable message on setup failure
-    (no episode list, no video files) -- used by both the CLI and the GUI."""
+def resolve_episodes(cfg: RunConfig) -> List:
+    """Fetch and season-filter the episode list for cfg.show_name, raising
+    RuntimeError with a human-readable message on failure."""
     tvmaze_id = cfg.tvmaze_id
     if cfg.source == "tvmaze" and tvmaze_id is None:
         tvmaze_id = resolve_tvmaze_id(cfg.show_name, cfg.interactive)
@@ -194,6 +200,14 @@ def build_plan_tv(cfg: RunConfig, on_progress=None):
     if not episodes:
         raise RuntimeError("No episodes available to match against (check show name / season / episode source)")
     logger.info("Loaded %d candidate episode(s) for %r", len(episodes), cfg.show_name)
+    return episodes
+
+
+def build_plan_tv(cfg: RunConfig, on_progress=None):
+    """Resolve the episode list and scan every video, returning a plan.
+    Raises RuntimeError with a human-readable message on setup failure
+    (no episode list, no video files) -- used by both the CLI and the GUI."""
+    episodes = resolve_episodes(cfg)
 
     videos = find_video_files(cfg.directory, cfg.extensions)
     if not videos:
@@ -327,6 +341,22 @@ def main(argv: Optional[List[str]] = None) -> None:
         vlm_host=args.vlm_host,
         vlm_max_frames=args.vlm_max_frames,
     )
+
+    if args.export_episodes_json:
+        if cfg.mode != "tv":
+            logger.error("--export-episodes-json only applies to --mode tv")
+            sys.exit(1)
+        try:
+            episodes = resolve_episodes(cfg)
+        except RuntimeError as exc:
+            logger.error("%s", exc)
+            sys.exit(1)
+        payload = {"episodes": [
+            {"season": e.season, "episode": e.number, "title": e.title} for e in episodes
+        ]}
+        args.export_episodes_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        logger.info("Wrote %d episode(s) to %s", len(episodes), args.export_episodes_json)
+        sys.exit(0)
 
     run = run_tv if cfg.mode == "tv" else run_movie
     sys.exit(run(cfg))

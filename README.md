@@ -157,6 +157,22 @@ python3 titletracer.py /path/to/episodes --show "My Show" \
 }
 ```
 
+Rather than typing one of these out by hand for a long-running show, fetch
+what TVMaze/TMDb already has and edit from there with `--export-episodes-json`
+-- it resolves the episode list exactly like a normal run (including the
+TVMaze show picker if the name is ambiguous) and writes it out in this same
+format, without scanning any videos:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "One Piece" \
+  --export-episodes-json one_piece_episodes.json
+```
+
+This is also the fix for a common mismatch: TVMaze/TMDb's episode titles
+often aren't word-for-word what actually appears on a dub's on-screen title
+card. Export once, hand-edit the titles that need it, then point
+`--episodes-json` at your edited copy with `--source local`.
+
 ### Applying the renames
 
 Once the dry run looks correct, re-run the exact same command without
@@ -281,6 +297,7 @@ priority over `--jellyfin`.
 | `--mode` | `tv` | `tv` \| `movie` |
 | `--movies-json path.json` | (none) | Per-filename `{title, year}` overrides for `--mode movie` |
 | `--tvmaze-id N` | (none) | Fetch episodes for this exact TVMaze show id, bypassing name search |
+| `--export-episodes-json path.json` | (none) | Resolve the episode list and write it out; exits without scanning |
 | `--season N` | (none) | Restrict matching to one season |
 | `--interval` | `5` | Seconds between sampled frames |
 | `--max-scan` | `300` | Only scan the first N seconds of each video |
