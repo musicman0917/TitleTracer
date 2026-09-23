@@ -17,6 +17,7 @@ import cv2
 
 from .config import RunConfig
 from .episodes import Episode
+from .filename_hint import guess_episode_from_filename
 from .gaps import FileOutcome, infer_gaps
 from .matcher import MatchResult, build_filename, match_episode, sanitize_filename
 from .movies import Movie, resolve_movie_match
@@ -151,13 +152,22 @@ def scan_tv(
 
     for idx, video in enumerate(videos, 1):
         logger.info("Processing %s", video.name)
-        try:
-            result = process_video(video, episodes, cfg)
-        except IOError as exc:
-            logger.error("  Skipping (could not read video): %s", exc)
-            plan.append(PlanItem(video=video, status="error", note=str(exc)))
+
+        hint_episode = guess_episode_from_filename(video.stem, episodes) if cfg.filename_hint else None
+        if hint_episode is not None:
+            logger.info(
+                "  Filename indicates %s %r; skipping OCR/VLM scan",
+                hint_episode.code, hint_episode.title,
+            )
+            outcomes.append(FileOutcome(video=video, result=MatchResult(hint_episode, 100.0, "filename-hint")))
         else:
-            outcomes.append(FileOutcome(video=video, result=result))
+            try:
+                result = process_video(video, episodes, cfg)
+            except IOError as exc:
+                logger.error("  Skipping (could not read video): %s", exc)
+                plan.append(PlanItem(video=video, status="error", note=str(exc)))
+            else:
+                outcomes.append(FileOutcome(video=video, result=result))
         if on_progress:
             on_progress(idx, len(videos), video)
 
@@ -198,13 +208,20 @@ def scan_tv(
             ))
             continue
 
+        if applied_inference:
+            note = fo.inferred_note
+        elif result.ocr_text == "filename-hint":
+            note = "matched via filename number"
+        else:
+            note = ""
+
         used_targets.add(str(target))
         plan.append(PlanItem(
             video=video,
             status="matched_inferred" if applied_inference else "matched",
             target=target, target_display=target_display,
             label=f"{episode.code} {episode.title}", score=result.score,
-            note=fo.inferred_note if applied_inference else "",
+            note=note,
         ))
 
     return plan

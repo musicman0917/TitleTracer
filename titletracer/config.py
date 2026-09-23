@@ -30,6 +30,7 @@ class RunConfig:
     season: Optional[int] = None
     absolute_numbering: bool = False  # collapse to one season, sequential episode numbers
     absolute_numbering_season: int = 1
+    filename_hint: bool = False  # try parsing an episode number out of the filename first
 
     # Movie identification (mode="movie")
     movies_json: Optional[Path] = None  # per-filename {"title", "year"} overrides

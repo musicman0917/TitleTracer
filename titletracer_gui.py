@@ -158,6 +158,7 @@ class TitleTracerGUI:
         self.organize = tk.BooleanVar(value=True)
         self.fill_gaps = tk.BooleanVar(value=False)
         self.absolute_numbering = tk.BooleanVar(value=False)
+        self.filename_hint = tk.BooleanVar(value=False)
         self.vlm_verify = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="Pick a directory and click Preview.")
 
@@ -222,6 +223,14 @@ class TitleTracerGUI:
             row5, text="Absolute numbering (collapse to one season -- for shows whose "
                        "source-database 'seasons' are actually broadcast years)",
             variable=self.absolute_numbering,
+        ).pack(side="left")
+
+        row6 = ttk.Frame(self.tv_frame)
+        row6.pack(fill="x", pady=2)
+        ttk.Checkbutton(
+            row6, text="Try filename episode number first (e.g. S01E05, 1x05, Ep5, 5Ep -- "
+                       "skips OCR/VLM for files it can identify this way)",
+            variable=self.filename_hint,
         ).pack(side="left")
 
         # -- Movie-specific fields --
@@ -362,6 +371,7 @@ class TitleTracerGUI:
             organize_seasons=self.organize.get(),
             fill_gaps=self.fill_gaps.get(),
             absolute_numbering=self.absolute_numbering.get(),
+            filename_hint=self.filename_hint.get(),
             vlm_verify=self.vlm_verify.get(),
         )
 

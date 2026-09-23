@@ -242,6 +242,31 @@ with wider zero-padding (e.g. `E{episode:04d}` for `S01E0347`, instead of
 the default `E{episode:02d}`) so filenames still sort correctly in a plain
 file browser.
 
+### Skipping the scan when the filename already tells you (`--filename-hint`)
+
+If your rips already embed a reliable episode number in the filename --
+`Show S01E05.mkv`, `Show - 1x05.mkv`, `1000Ep.mp4`, `Episode 347 - ...`, etc.
+-- there's no need to pay for a full OCR/VLM pass just to confirm what the
+filename already says. `--filename-hint` tries to parse an episode number out
+of each filename *before* touching OCR or the VLM fallback; if it
+unambiguously identifies exactly one episode in the loaded list, that file's
+scan is skipped entirely (a `matched` result with the note "matched via
+filename number" in the report, so it's still visible which files were
+trusted this way rather than verified):
+
+```bash
+python3 titletracer.py /path/to/episodes --show "One Piece" --absolute-numbering \
+  --filename-hint --vlm-verify --dry-run
+```
+
+It's off by default: this trusts the filename instead of verifying it
+against the actual on-screen title card, which is the opposite of what this
+tool exists to do. Turn it on when you already know a library's numbering is
+solid and you just want to speed through it, and it composes well with
+`--vlm-verify` -- OCR and VLM still run as normal for any file whose
+filename doesn't parse, parses ambiguously (e.g. a number that doesn't match
+any loaded episode), or doesn't match the current episode list at all.
+
 ### Applying the renames
 
 Once the dry run looks correct, re-run the exact same command without
@@ -370,6 +395,7 @@ priority over `--jellyfin`.
 | `--season N` | (none) | Restrict matching to one season |
 | `--absolute-numbering` | off | Collapse the episode list into one continuously-numbered season |
 | `--absolute-numbering-season N` | `1` | Season label to use with `--absolute-numbering` |
+| `--filename-hint` | off | Try parsing an episode number out of the filename first, skipping OCR/VLM when it unambiguously matches |
 | `--interval` | `5` | Seconds between sampled frames |
 | `--max-scan` | `300` | Only scan the first N seconds of each video (0 = whole video) |
 | `--full-scan` | off | Scan each entire video, no time cap -- same as `--max-scan 0` |

@@ -83,6 +83,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--absolute-numbering-season", type=int, default=1,
         help="Season number to label episodes with under --absolute-numbering (default: 1)",
     )
+    p.add_argument(
+        "--filename-hint", action="store_true",
+        help="Before OCR/VLM, try to parse an episode number straight out of each filename "
+             "(S01E05, 1x05, Ep5, 5Ep, etc.) -- if it unambiguously matches exactly one episode "
+             "in the list, skip scanning that file entirely. Off by default since this trusts the "
+             "filename instead of verifying it, which defeats the point of this tool unless you "
+             "already know the numbering in your rip is reliable.",
+    )
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
         "--max-scan", type=float, default=300.0,
@@ -368,6 +376,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         season=args.season,
         absolute_numbering=args.absolute_numbering,
         absolute_numbering_season=args.absolute_numbering_season,
+        filename_hint=args.filename_hint,
         interval_sec=args.interval,
         max_scan_sec=0.0 if args.full_scan else args.max_scan,
         threshold=args.threshold,
