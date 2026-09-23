@@ -22,7 +22,7 @@ from .matcher import MatchResult, build_filename, match_episode, sanitize_filena
 from .movies import Movie, resolve_movie_match
 from .ocr import clean_text, crop_region, extract_text, validate_ocr_lang
 from .video import sample_frames
-from .vlm import check_available, transcribe_title
+from .vlm import check_available, check_model_available, transcribe_title
 
 logger = logging.getLogger("titletracer")
 
@@ -135,6 +135,14 @@ def scan_tv(
             "Ollama not reachable at %s; disabling the VLM fallback for this run instead of "
             "retrying it on every unmatched frame. Start Ollama (or fix --vlm-host) and re-run "
             "if you want it.", cfg.vlm_host,
+        )
+        cfg = replace(cfg, vlm_verify=False)
+    elif cfg.vlm_verify and not check_model_available(cfg.vlm_host, cfg.vlm_model):
+        logger.warning(
+            "Ollama is reachable at %s but the model '%s' isn't pulled there; disabling the VLM "
+            "fallback for this run instead of failing on every unmatched frame. Run "
+            "`ollama pull %s` (or fix --vlm-model) and re-run if you want it.",
+            cfg.vlm_host, cfg.vlm_model, cfg.vlm_model,
         )
         cfg = replace(cfg, vlm_verify=False)
 

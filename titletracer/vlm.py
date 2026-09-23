@@ -5,6 +5,7 @@ match, since a local vision model is much slower per frame than OCR."""
 
 import base64
 import logging
+from typing import List
 
 import cv2
 import numpy as np
@@ -31,6 +32,26 @@ def check_available(host: str, timeout: float = 3.0) -> bool:
         return True
     except requests.RequestException:
         return False
+
+
+def list_models(host: str, timeout: float = 3.0) -> List[str]:
+    """Names of the models Ollama currently has pulled, or [] on any error."""
+    try:
+        resp = requests.get(f"{host.rstrip('/')}/api/tags", timeout=timeout)
+        resp.raise_for_status()
+        return [m.get("name", "") for m in resp.json().get("models", [])]
+    except (requests.RequestException, ValueError):
+        return []
+
+
+def check_model_available(host: str, model: str, timeout: float = 3.0) -> bool:
+    """Whether `model` is pulled on the Ollama server -- callers should check
+    this once per run rather than discovering it's missing via a 404 on
+    every single frame of every unmatched file. Matches ignoring an Ollama
+    tag suffix (e.g. a configured "llava" matches a pulled "llava:latest")."""
+    base = model.split(":")[0]
+    names = list_models(host, timeout)
+    return any(n == model or n.split(":")[0] == base for n in names)
 
 
 def transcribe_title(image: np.ndarray, model: str, host: str, timeout: float = 60.0) -> str:

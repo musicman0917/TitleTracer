@@ -109,10 +109,12 @@ python3 titletracer.py /path/to/episodes --show "Your Show" --vlm-verify --dry-r
 
 It's opt-in and only runs on the subset of files OCR couldn't confidently
 match, since a local model is much slower per frame than OCR. Ollama's
-reachability is checked once up front -- if it's not actually running,
+reachability, and whether `--vlm-model` is actually pulled there, are both
+checked once up front -- if the server's down or the model is missing,
 `--vlm-verify` is disabled for the rest of that run (one clear warning
-explaining why) rather than retrying a dead connection on every frame of
-every unmatched file. `--vlm-max-frames` (default 15) separately bounds how
+explaining why, including the `ollama pull` command to fix it) rather than
+retrying a dead connection or hitting a 404 on every frame of every
+unmatched file. `--vlm-max-frames` (default 15) separately bounds how
 many frames are tried per file when Ollama *is* reachable but a particular
 file never gets a confident answer.
 
