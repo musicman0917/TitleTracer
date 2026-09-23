@@ -60,6 +60,7 @@ class TitleTracerGUI:
         self.jellyfin = tk.BooleanVar(value=True)
         self.organize = tk.BooleanVar(value=True)
         self.fill_gaps = tk.BooleanVar(value=False)
+        self.absolute_numbering = tk.BooleanVar(value=False)
         self.vlm_verify = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="Pick a directory and click Preview.")
 
@@ -114,6 +115,14 @@ class TitleTracerGUI:
         row4.pack(fill="x", pady=2)
         ttk.Checkbutton(row4, text="Fill gaps (position-inference for title-card-less episodes)",
                          variable=self.fill_gaps).pack(side="left")
+
+        row5 = ttk.Frame(self.tv_frame)
+        row5.pack(fill="x", pady=2)
+        ttk.Checkbutton(
+            row5, text="Absolute numbering (collapse to one season -- for shows whose "
+                       "source-database 'seasons' are actually broadcast years)",
+            variable=self.absolute_numbering,
+        ).pack(side="left")
 
         # -- Movie-specific fields --
         self.movie_frame = ttk.LabelFrame(top, text="Movie options", padding=8)
@@ -243,6 +252,7 @@ class TitleTracerGUI:
             pattern=pattern if self.mode.get() == "tv" else DEFAULT_PATTERN,
             organize_seasons=self.organize.get(),
             fill_gaps=self.fill_gaps.get(),
+            absolute_numbering=self.absolute_numbering.get(),
             vlm_verify=self.vlm_verify.get(),
         )
 

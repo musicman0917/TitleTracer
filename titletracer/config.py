@@ -28,6 +28,8 @@ class RunConfig:
     tmdb_api_key: Optional[str] = None
     tvmaze_id: Optional[int] = None
     season: Optional[int] = None
+    absolute_numbering: bool = False  # collapse to one season, sequential episode numbers
+    absolute_numbering_season: int = 1
 
     # Movie identification (mode="movie")
     movies_json: Optional[Path] = None  # per-filename {"title", "year"} overrides

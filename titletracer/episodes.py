@@ -160,6 +160,25 @@ def load_from_json(path: Path) -> List[Episode]:
     return episodes
 
 
+def looks_like_year_seasons(episodes: List[Episode]) -> bool:
+    """True if every distinct season value looks like a broadcast year
+    rather than a real season number -- some long-running shows (a lot of
+    anime included) get listed this way on TVMaze/TMDb when the source
+    database has no real season breaks."""
+    seasons = {e.season for e in episodes}
+    return len(seasons) >= 3 and all(1900 <= s <= 2100 for s in seasons)
+
+
+def apply_absolute_numbering(episodes: List[Episode], season: int = 1) -> List[Episode]:
+    """Collapse a chronologically-sorted episode list into one season with
+    sequential episode numbers, discarding whatever season grouping the
+    source database used. Useful for a show whose season values don't
+    match typical media-server conventions (e.g. year-per-season), where
+    Jellyfin-style absolute numbering under a single season is the norm."""
+    ordered = sorted(episodes, key=lambda e: (e.season, e.number))
+    return [Episode(season=season, number=i, title=e.title) for i, e in enumerate(ordered, 1)]
+
+
 def get_episode_list(
     show_name: str,
     source: str = "tvmaze",

@@ -13,7 +13,13 @@ import requests
 
 from .config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, JELLYFIN_PATTERN, RunConfig
 from .engine import apply_plan, find_video_files, scan_movie, scan_tv
-from .episodes import EpisodeFetchError, get_episode_list, search_tvmaze_shows
+from .episodes import (
+    EpisodeFetchError,
+    apply_absolute_numbering,
+    get_episode_list,
+    looks_like_year_seasons,
+    search_tvmaze_shows,
+)
 from .movies import MovieLookupError, load_overrides
 
 logger = logging.getLogger("titletracer")
@@ -66,6 +72,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "shares the name) -- find the right id via https://api.tvmaze.com/search/shows?q=your+show",
     )
     p.add_argument("--season", type=int, default=None, help="Restrict matching to a single season number (--mode tv)")
+    p.add_argument(
+        "--absolute-numbering", action="store_true",
+        help="Collapse the episode list into one continuously-numbered season instead of trusting "
+             "the source database's season grouping -- use this when that grouping is broadcast "
+             "year rather than a real season number, common for long-running shows on TVMaze/TMDb "
+             "(you'll get a warning suggesting this automatically when it's detected)",
+    )
+    p.add_argument(
+        "--absolute-numbering-season", type=int, default=1,
+        help="Season number to label episodes with under --absolute-numbering (default: 1)",
+    )
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
         "--max-scan", type=float, default=300.0,
@@ -213,6 +230,17 @@ def resolve_episodes(cfg: RunConfig) -> List:
         episodes = [e for e in episodes if e.season == cfg.season]
     if not episodes:
         raise RuntimeError("No episodes available to match against (check show name / season / episode source)")
+
+    if cfg.absolute_numbering:
+        episodes = apply_absolute_numbering(episodes, cfg.absolute_numbering_season)
+    elif looks_like_year_seasons(episodes):
+        logger.warning(
+            "Episode 'seasons' look like broadcast years (%s), not real season numbers -- "
+            "this is common for long-running shows on TVMaze/TMDb. Consider re-running with "
+            "--absolute-numbering to collapse them into one continuously-numbered season.",
+            ", ".join(str(s) for s in sorted({e.season for e in episodes})[:5]) + ", ...",
+        )
+
     logger.info("Loaded %d candidate episode(s) for %r", len(episodes), cfg.show_name)
     return episodes
 
@@ -338,6 +366,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         tmdb_api_key=args.tmdb_api_key,
         tvmaze_id=args.tvmaze_id,
         season=args.season,
+        absolute_numbering=args.absolute_numbering,
+        absolute_numbering_season=args.absolute_numbering_season,
         interval_sec=args.interval,
         max_scan_sec=0.0 if args.full_scan else args.max_scan,
         threshold=args.threshold,

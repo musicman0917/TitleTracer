@@ -196,6 +196,33 @@ often aren't word-for-word what actually appears on a dub's on-screen title
 card. Export once, hand-edit the titles that need it, then point
 `--episodes-json` at your edited copy with `--source local`.
 
+### Shows with year-based "seasons"
+
+Some very long-running shows (a lot of anime included) aren't broken into
+real seasons on TVMaze/TMDb at all -- every episode just gets grouped under
+whatever year it aired, e.g. One Piece comes back with 28 "seasons"
+numbered 1999 through 2026. Left alone, that produces filenames like
+`One Piece - S1999E01 - ...` and, with `--organize-seasons`, folders named
+`Season 1999/`.
+
+The tool detects this automatically (three or more season values that are
+all plausible calendar years) and logs a warning suggesting the fix:
+`--absolute-numbering` discards that grouping and renumbers every episode
+sequentially under a single season instead, matching how these shows are
+conventionally organized in Jellyfin:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "One Piece" --absolute-numbering --dry-run
+```
+
+which produces `One Piece - S01E347 - ...` instead. It composes with
+`--export-episodes-json` too -- export with `--absolute-numbering` and the
+saved file already has the renumbered, Jellyfin-friendly season/episode
+values. For a show with 1000+ episodes, consider also overriding `--pattern`
+with wider zero-padding (e.g. `E{episode:04d}` for `S01E0347`, instead of
+the default `E{episode:02d}`) so filenames still sort correctly in a plain
+file browser.
+
 ### Applying the renames
 
 Once the dry run looks correct, re-run the exact same command without
@@ -322,6 +349,8 @@ priority over `--jellyfin`.
 | `--tvmaze-id N` | (none) | Fetch episodes for this exact TVMaze show id, bypassing name search |
 | `--export-episodes-json path.json` | (none) | Resolve the episode list and write it out; exits without scanning |
 | `--season N` | (none) | Restrict matching to one season |
+| `--absolute-numbering` | off | Collapse the episode list into one continuously-numbered season |
+| `--absolute-numbering-season N` | `1` | Season label to use with `--absolute-numbering` |
 | `--interval` | `5` | Seconds between sampled frames |
 | `--max-scan` | `300` | Only scan the first N seconds of each video (0 = whole video) |
 | `--full-scan` | off | Scan each entire video, no time cap -- same as `--max-scan 0` |
