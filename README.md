@@ -27,13 +27,27 @@ Pick TV Show or Movie at the top, choose your directory and options, then:
 1. **Preview** -- scans every file in a background thread (the window stays
    responsive) and fills in a results table: file, status, matched
    title/episode, score, and where it would be renamed to. Nothing on disk
-   is touched yet.
+   is touched yet. **Cancel** stops it after the current file if it's
+   heading somewhere wrong (wrong show matched, wrong settings) -- also
+   useful if it's clearly going to run long, e.g. on a slow VLM fallback.
 2. **Apply Renames** -- performs the renames from that same cached plan (no
    re-scanning) after a confirmation prompt.
 
+TV mode also has an **Export Episodes JSON...** button next to the Episodes
+JSON field -- it resolves the episode list (same as `--export-episodes-json`
+on the CLI, honoring Absolute numbering if checked) and offers to load the
+saved file back in as `local` source, useful before a real scan so TVMaze
+isn't queried again mid-run. A **TVMaze ID (optional)** field pins a show
+directly by id, same as `--tvmaze-id`, for when the name alone is ambiguous
+-- since the GUI can't pause to prompt you interactively the way the CLI
+does, it silently auto-picks TVMaze's top-ranked match on an ambiguous name,
+so pin the id (or export/load a local JSON first) if you're not sure that's
+the right one.
+
 The log pane at the bottom shows the same detail the CLI prints, useful for
 seeing *why* a file didn't match. Advanced flags not exposed in the GUI
-(`--debug-dir`, `--vlm-*`, `--tvmaze-id`, etc.) remain available via the CLI.
+(`--debug-dir`, most `--vlm-*` options beyond the on/off toggle, etc.)
+remain available via the CLI.
 
 ## How it works
 
@@ -92,12 +106,13 @@ python3 titletracer.py /path/to/episodes --show "Your Show" --vlm-verify --dry-r
 ```
 
 It's opt-in and only runs on the subset of files OCR couldn't confidently
-match, since a local model is much slower per frame than OCR. If Ollama
-isn't reachable, requests fail gracefully (logged as warnings) and the file
-falls through to `manual_review` same as if `--vlm-verify` weren't set.
-`--vlm-max-frames` (default 15) bounds how many frames are tried per file
-before giving up on it, so a long run of unmatched files can't stall for
-minutes each on the local model.
+match, since a local model is much slower per frame than OCR. Ollama's
+reachability is checked once up front -- if it's not actually running,
+`--vlm-verify` is disabled for the rest of that run (one clear warning
+explaining why) rather than retrying a dead connection on every frame of
+every unmatched file. `--vlm-max-frames` (default 15) separately bounds how
+many frames are tried per file when Ollama *is* reachable but a particular
+file never gets a confident answer.
 
 ## Installation
 

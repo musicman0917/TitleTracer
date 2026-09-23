@@ -5,6 +5,7 @@ Preview runs a full scan and shows the plan in a table without touching
 any files; Apply performs the renames from that cached plan (no
 re-scanning). See README.md for the CLI if you'd rather script this."""
 
+import json
 import logging
 import queue
 import sys
@@ -13,9 +14,9 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from titletracer.cli import build_plan_movie, build_plan_tv
+from titletracer.cli import build_plan_movie, build_plan_tv, resolve_episodes
 from titletracer.config import DEFAULT_EXTENSIONS, DEFAULT_PATTERN, JELLYFIN_PATTERN, RunConfig
-from titletracer.engine import apply_plan
+from titletracer.engine import ScanCancelled, apply_plan
 
 logger = logging.getLogger("titletracer")
 
@@ -42,12 +43,14 @@ class TitleTracerGUI:
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.plan = []
         self.scan_thread = None
+        self.cancel_event = threading.Event()
 
         self.mode = tk.StringVar(value="tv")
         self.directory = tk.StringVar()
         self.show_name = tk.StringVar()
         self.source = tk.StringVar(value="tvmaze")
         self.episodes_json = tk.StringVar()
+        self.tvmaze_id = tk.StringVar()
         self.tmdb_api_key = tk.StringVar()
         self.movies_json = tk.StringVar()
         self.season = tk.StringVar()
@@ -104,12 +107,15 @@ class TitleTracerGUI:
         ).pack(side="left")
         ttk.Label(row2, text="  Season (optional):").pack(side="left", padx=(12, 4))
         ttk.Entry(row2, textvariable=self.season, width=6).pack(side="left")
+        ttk.Label(row2, text="  TVMaze ID (optional):").pack(side="left", padx=(12, 4))
+        ttk.Entry(row2, textvariable=self.tvmaze_id, width=8).pack(side="left")
 
         row3 = ttk.Frame(self.tv_frame)
         row3.pack(fill="x", pady=2)
         ttk.Label(row3, text="Episodes JSON:", width=14).pack(side="left")
         ttk.Entry(row3, textvariable=self.episodes_json).pack(side="left", fill="x", expand=True)
-        ttk.Button(row3, text="Browse...", command=self._browse_episodes_json).pack(side="left")
+        ttk.Button(row3, text="Browse...", command=self._browse_episodes_json).pack(side="left", padx=(4, 4))
+        ttk.Button(row3, text="Export Episodes JSON...", command=self._on_export_episodes).pack(side="left")
 
         row4 = ttk.Frame(self.tv_frame)
         row4.pack(fill="x", pady=2)
@@ -177,8 +183,10 @@ class TitleTracerGUI:
         btn_frame.pack(fill="x", pady=(4, 0))
         self.preview_btn = ttk.Button(btn_frame, text="Preview", command=self._on_preview)
         self.preview_btn.pack(side="left")
+        self.cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel, state="disabled")
+        self.cancel_btn.pack(side="left", padx=8)
         self.apply_btn = ttk.Button(btn_frame, text="Apply Renames", command=self._on_apply, state="disabled")
-        self.apply_btn.pack(side="left", padx=8)
+        self.apply_btn.pack(side="left")
         ttk.Label(btn_frame, textvariable=self.status_text).pack(side="left", padx=12)
 
         # -- Results table --
@@ -233,6 +241,7 @@ class TitleTracerGUI:
     def _build_config(self) -> RunConfig:
         pattern = JELLYFIN_PATTERN if self.jellyfin.get() else DEFAULT_PATTERN
         season = int(self.season.get()) if self.season.get().strip() else None
+        tvmaze_id = int(self.tvmaze_id.get()) if self.tvmaze_id.get().strip() else None
         return RunConfig(
             directory=Path(self.directory.get()),
             show_name=self.show_name.get() or None,
@@ -242,6 +251,7 @@ class TitleTracerGUI:
             local_json=Path(self.episodes_json.get()) if self.episodes_json.get() else None,
             movies_json=Path(self.movies_json.get()) if self.movies_json.get() else None,
             tmdb_api_key=self.tmdb_api_key.get() or None,
+            tvmaze_id=tvmaze_id,
             season=season,
             interval_sec=self.interval.get(),
             max_scan_sec=0.0 if self.full_scan.get() else self.max_scan.get(),
@@ -269,16 +279,25 @@ class TitleTracerGUI:
         self._set_log_handler()
         self.tree.delete(*self.tree.get_children())
         self.plan = []
+        self.cancel_event.clear()
         self.apply_btn["state"] = "disabled"
         self.preview_btn["state"] = "disabled"
+        self.cancel_btn["state"] = "normal"
         self.status_text.set("Scanning...")
 
         cfg = self._build_config()
         self.scan_thread = threading.Thread(target=self._scan_worker, args=(cfg,), daemon=True)
         self.scan_thread.start()
 
+    def _on_cancel(self):
+        self.cancel_event.set()
+        self.cancel_btn["state"] = "disabled"
+        self.status_text.set("Cancelling...")
+
     def _scan_worker(self, cfg: RunConfig):
         def on_progress(idx, total, video):
+            if self.cancel_event.is_set():
+                raise ScanCancelled()
             self.log_queue.put(f"__PROGRESS__ {idx}/{total} {video.name}")
 
         try:
@@ -288,8 +307,36 @@ class TitleTracerGUI:
                 plan = build_plan_movie(cfg, on_progress=on_progress)
             self.log_queue.put("__PLAN_DONE__")
             self.plan = plan
+        except ScanCancelled:
+            self.log_queue.put("__PLAN_CANCELLED__")
         except RuntimeError as exc:
             self.log_queue.put(f"__PLAN_ERROR__ {exc}")
+
+    def _on_export_episodes(self):
+        if self.mode.get() != "tv":
+            messagebox.showerror("TitleTracer", "Export Episodes JSON only applies to TV mode.")
+            return
+        if not self.show_name.get():
+            messagebox.showerror("TitleTracer", "Show name is required.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+
+        self._set_log_handler()
+        cfg = self._build_config()
+        threading.Thread(target=self._export_worker, args=(cfg, Path(path)), daemon=True).start()
+
+    def _export_worker(self, cfg: RunConfig, path: Path):
+        try:
+            episodes = resolve_episodes(cfg)
+            payload = {"episodes": [
+                {"season": e.season, "episode": e.number, "title": e.title} for e in episodes
+            ]}
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self.log_queue.put(f"__EXPORT_DONE__ {len(episodes)}|{path}")
+        except RuntimeError as exc:
+            self.log_queue.put(f"__EXPORT_ERROR__ {exc}")
 
     def _on_apply(self):
         if not self.plan:
@@ -327,8 +374,14 @@ class TitleTracerGUI:
                 line = self.log_queue.get_nowait()
                 if line == "__PLAN_DONE__":
                     self._on_scan_done()
+                elif line == "__PLAN_CANCELLED__":
+                    self._on_scan_cancelled()
                 elif line.startswith("__PLAN_ERROR__"):
                     self._on_scan_error(line[len("__PLAN_ERROR__ "):])
+                elif line.startswith("__EXPORT_DONE__"):
+                    self._on_export_done(line[len("__EXPORT_DONE__ "):])
+                elif line.startswith("__EXPORT_ERROR__"):
+                    messagebox.showerror("TitleTracer", line[len("__EXPORT_ERROR__ "):])
                 elif line.startswith("__PROGRESS__"):
                     self.status_text.set(line[len("__PROGRESS__ "):])
                 else:
@@ -345,15 +398,30 @@ class TitleTracerGUI:
 
     def _on_scan_done(self):
         self.preview_btn["state"] = "normal"
+        self.cancel_btn["state"] = "disabled"
         self._refresh_table()
         matched = sum(1 for it in self.plan if it.status in ("matched", "matched_inferred"))
         self.status_text.set(f"Preview complete: {matched}/{len(self.plan)} matched.")
         self.apply_btn["state"] = "normal" if matched else "disabled"
 
+    def _on_scan_cancelled(self):
+        self.preview_btn["state"] = "normal"
+        self.cancel_btn["state"] = "disabled"
+        self.status_text.set("Cancelled.")
+
     def _on_scan_error(self, message: str):
         self.preview_btn["state"] = "normal"
+        self.cancel_btn["state"] = "disabled"
         self.status_text.set("Error -- see log.")
         messagebox.showerror("TitleTracer", message)
+
+    def _on_export_done(self, payload: str):
+        count, path = payload.split("|", 1)
+        if messagebox.askyesno(
+            "TitleTracer", f"Wrote {count} episode(s) to {path}.\n\nLoad it now (Source: local)?",
+        ):
+            self.source.set("local")
+            self.episodes_json.set(path)
 
     def _refresh_table(self):
         self.tree.delete(*self.tree.get_children())

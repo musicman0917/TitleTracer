@@ -9,7 +9,7 @@ then apply it -- without re-scanning (the expensive part) in between.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -22,14 +22,19 @@ from .matcher import MatchResult, build_filename, match_episode, sanitize_filena
 from .movies import Movie, resolve_movie_match
 from .ocr import clean_text, crop_region, extract_text, validate_ocr_lang
 from .video import sample_frames
-from .vlm import transcribe_title
+from .vlm import check_available, transcribe_title
 
 logger = logging.getLogger("titletracer")
 
 # Called with (current_index, total_count, video_path) after each file is
 # scanned, so a UI can show progress. Optional everywhere; defaults to a
-# no-op so CLI callers don't need to pass one.
+# no-op so CLI callers don't need to pass one. Raising ScanCancelled from
+# it aborts the scan after the current file rather than mid-file.
 ProgressCallback = Callable[[int, int, Path], None]
+
+
+class ScanCancelled(Exception):
+    """Raise from an on_progress callback to abort a scan in progress."""
 
 
 @dataclass
@@ -124,6 +129,14 @@ def scan_tv(
     it's applied to the plan only when cfg.fill_gaps is set, otherwise
     it's just attached as a hint on the manual_review item."""
     validate_ocr_lang(cfg.ocr_lang)
+
+    if cfg.vlm_verify and not check_available(cfg.vlm_host):
+        logger.warning(
+            "Ollama not reachable at %s; disabling the VLM fallback for this run instead of "
+            "retrying it on every unmatched frame. Start Ollama (or fix --vlm-host) and re-run "
+            "if you want it.", cfg.vlm_host,
+        )
+        cfg = replace(cfg, vlm_verify=False)
 
     outcomes: List[FileOutcome] = []
     plan: List[PlanItem] = []

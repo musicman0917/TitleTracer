@@ -21,6 +21,18 @@ _PROMPT = (
 )
 
 
+def check_available(host: str, timeout: float = 3.0) -> bool:
+    """Quick reachability check for the Ollama server -- callers should
+    check this once per run rather than discovering it's down by burning
+    through a full per-frame retry budget on every unmatched file."""
+    try:
+        resp = requests.get(f"{host.rstrip('/')}/api/tags", timeout=timeout)
+        resp.raise_for_status()
+        return True
+    except requests.RequestException:
+        return False
+
+
 def transcribe_title(image: np.ndarray, model: str, host: str, timeout: float = 60.0) -> str:
     """Ask a local Ollama vision model to read any title text in `image`.
 
