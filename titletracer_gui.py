@@ -20,6 +20,99 @@ from titletracer.engine import ScanCancelled, apply_plan
 
 logger = logging.getLogger("titletracer")
 
+# Dark palette. ttk's built-in themes are all light and don't follow the
+# OS dark-mode setting, so this is applied explicitly rather than left to
+# whatever the platform default happens to be.
+DARK_BG = "#1e1e1e"
+DARK_PANEL = "#252526"
+DARK_WIDGET_BG = "#3c3c3c"
+DARK_WIDGET_BG_ACTIVE = "#4a4a4a"
+DARK_FG = "#d4d4d4"
+DARK_FG_MUTED = "#9d9d9d"
+DARK_ACCENT = "#3a96dd"
+DARK_SELECT_BG = "#094771"
+DARK_BORDER = "#555555"
+
+
+def _apply_dark_theme(root: tk.Tk) -> None:
+    root.configure(bg=DARK_BG)
+    # The Combobox/OptionMenu dropdown list is a raw Tk Listbox that ttk
+    # doesn't theme via Style -- it only picks up colors via option_add.
+    root.option_add("*TCombobox*Listbox*Background", DARK_WIDGET_BG)
+    root.option_add("*TCombobox*Listbox*Foreground", DARK_FG)
+    root.option_add("*TCombobox*Listbox*selectBackground", DARK_SELECT_BG)
+    root.option_add("*TCombobox*Listbox*selectForeground", DARK_FG)
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")  # the only built-in theme that's fully restylable cross-platform
+    except tk.TclError:
+        pass
+
+    style.configure(
+        ".", background=DARK_BG, foreground=DARK_FG, fieldbackground=DARK_WIDGET_BG,
+        bordercolor=DARK_BORDER, lightcolor=DARK_BG, darkcolor=DARK_BG, troughcolor=DARK_BG,
+    )
+    style.configure("TFrame", background=DARK_BG)
+    style.configure("TLabelframe", background=DARK_BG, bordercolor=DARK_BORDER)
+    style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG)
+    style.configure("TLabel", background=DARK_BG, foreground=DARK_FG)
+
+    style.configure("TButton", background=DARK_WIDGET_BG, foreground=DARK_FG, bordercolor=DARK_BORDER)
+    style.map(
+        "TButton",
+        background=[("disabled", DARK_PANEL), ("active", DARK_WIDGET_BG_ACTIVE)],
+        foreground=[("disabled", DARK_FG_MUTED)],
+    )
+
+    for cls in ("TCheckbutton", "TRadiobutton"):
+        style.configure(cls, background=DARK_BG, foreground=DARK_FG)
+        style.map(cls, background=[("active", DARK_BG)], foreground=[("disabled", DARK_FG_MUTED)])
+
+    style.configure(
+        "TEntry", fieldbackground=DARK_WIDGET_BG, foreground=DARK_FG,
+        insertcolor=DARK_FG, bordercolor=DARK_BORDER,
+    )
+    style.map(
+        "TEntry",
+        fieldbackground=[("disabled", DARK_PANEL)],
+        foreground=[("disabled", DARK_FG_MUTED)],
+    )
+
+    style.configure(
+        "TSpinbox", fieldbackground=DARK_WIDGET_BG, background=DARK_WIDGET_BG,
+        foreground=DARK_FG, insertcolor=DARK_FG, arrowcolor=DARK_FG, bordercolor=DARK_BORDER,
+    )
+    style.map(
+        "TSpinbox",
+        fieldbackground=[("disabled", DARK_PANEL)],
+        foreground=[("disabled", DARK_FG_MUTED)],
+    )
+
+    style.configure(
+        "TCombobox", fieldbackground=DARK_WIDGET_BG, background=DARK_WIDGET_BG,
+        foreground=DARK_FG, arrowcolor=DARK_FG, bordercolor=DARK_BORDER,
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", DARK_WIDGET_BG), ("disabled", DARK_PANEL)],
+        foreground=[("disabled", DARK_FG_MUTED)],
+        selectbackground=[("readonly", DARK_WIDGET_BG)],
+        selectforeground=[("readonly", DARK_FG)],
+    )
+
+    style.configure(
+        "Vertical.TScrollbar", background=DARK_WIDGET_BG, troughcolor=DARK_BG,
+        bordercolor=DARK_BORDER, arrowcolor=DARK_FG,
+    )
+    style.configure(
+        "Treeview", background=DARK_WIDGET_BG, fieldbackground=DARK_WIDGET_BG,
+        foreground=DARK_FG, bordercolor=DARK_BORDER,
+    )
+    style.map("Treeview", background=[("selected", DARK_SELECT_BG)], foreground=[("selected", DARK_FG)])
+    style.configure("Treeview.Heading", background=DARK_PANEL, foreground=DARK_FG, bordercolor=DARK_BORDER)
+    style.map("Treeview.Heading", background=[("active", DARK_WIDGET_BG_ACTIVE)])
+
 
 class QueueLogHandler(logging.Handler):
     """Pushes formatted log records into a thread-safe queue for the GUI
@@ -38,7 +131,8 @@ class TitleTracerGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("TitleTracer")
-        root.geometry("900x700")
+        root.geometry("900x950")
+        root.minsize(760, 700)
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.plan = []
@@ -176,7 +270,7 @@ class TitleTracerGUI:
         ttk.Entry(srow3, textvariable=self.ocr_lang, width=12).pack(side="left", padx=(4, 6))
         ttk.Label(
             srow3, text="TV only -- e.g. 'eng', 'jpn', or 'eng+jpn' (needs matching traineddata installed)",
-            foreground="gray",
+            foreground=DARK_FG_MUTED,
         ).pack(side="left")
 
         btn_frame = ttk.Frame(top)
@@ -205,7 +299,12 @@ class TitleTracerGUI:
         # -- Log pane --
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=(10, 4))
         log_frame.pack(fill="both", expand=False, padx=10, pady=10)
-        self.log_text = tk.Text(log_frame, height=8, state="disabled", wrap="word")
+        self.log_text = tk.Text(
+            log_frame, height=8, state="disabled", wrap="word",
+            bg=DARK_WIDGET_BG, fg=DARK_FG, insertbackground=DARK_FG,
+            selectbackground=DARK_SELECT_BG, selectforeground=DARK_FG,
+            relief="flat", highlightthickness=1, highlightbackground=DARK_BORDER,
+        )
         self.log_text.pack(fill="both", expand=True)
 
     def _on_mode_change(self):
@@ -434,6 +533,7 @@ class TitleTracerGUI:
 
 def main():
     root = tk.Tk()
+    _apply_dark_theme(root)
     TitleTracerGUI(root)
     root.mainloop()
 

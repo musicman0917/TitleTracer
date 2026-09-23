@@ -20,7 +20,9 @@ Built on Tkinter, which ships with Python already -- no extra dependency,
 no server, fully offline apart from the metadata lookups themselves. (On
 some Linux distros Tkinter is a separate package: `sudo apt install
 python3-tk`. It's bundled by default with the python.org Windows/macOS
-installers.)
+installers.) The window uses a dark theme always -- ttk's built-in themes
+are all light and don't follow the OS's dark-mode setting either way, so
+this is applied explicitly rather than left at the stock bright default.
 
 Pick TV Show or Movie at the top, choose your directory and options, then:
 
