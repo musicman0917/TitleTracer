@@ -85,6 +85,39 @@ remain available via the CLI.
    `--pattern`, checks for collisions, and either prints the plan
    (`--dry-run`) or renames the file.
 
+### Raw/subbed rips with a non-English title card
+
+`--ocr-lang` (and the VLM fallback) can *read* a title card in any script,
+but reading it is only half the job -- the result still has to fuzzy-match
+against your loaded episode list's titles. If the title card is in Japanese
+but the episode list has English titles (which is what TVMaze/TMDb give you
+by default), the match will fail no matter how accurate the OCR/VLM read
+was, since the two strings share no characters to compare. You need an
+episode list in the *same* language as the title card.
+
+TMDb supports localized episode titles via `--tmdb-language` (default
+`en-US`):
+
+```bash
+python3 titletracer.py /path/to/episodes --show "One Piece" \
+  --source tmdb --tmdb-api-key YOUR_KEY --tmdb-language ja-JP \
+  --ocr-lang jpn --vlm-verify --dry-run
+```
+
+This composes with `--export-episodes-json` too, so you can pull a
+Japanese-titled episode list once and reuse it locally:
+
+```bash
+python3 titletracer.py /path/to/episodes --show "One Piece" \
+  --source tmdb --tmdb-api-key YOUR_KEY --tmdb-language ja-JP \
+  --export-episodes-json one_piece_jp.json
+```
+
+TMDb falls back to the English title for any individual episode it has no
+translation for, so a mixed list (mostly Japanese, a few English) is normal
+and not a bug. TVMaze has no equivalent language option, so this only works
+with `--source tmdb`.
+
 ### Optional: local vision-LLM fallback (`--vlm-verify`)
 
 Tesseract's thresholding-based OCR struggles with stylized title cards —
@@ -391,6 +424,7 @@ priority over `--jellyfin`.
 | `--mode` | `tv` | `tv` \| `movie` |
 | `--movies-json path.json` | (none) | Per-filename `{title, year}` overrides for `--mode movie` |
 | `--tvmaze-id N` | (none) | Fetch episodes for this exact TVMaze show id, bypassing name search |
+| `--tmdb-language` | `en-US` | TMDb locale for episode titles (e.g. `ja-JP`), so the episode list matches a non-English title card |
 | `--export-episodes-json path.json` | (none) | Resolve the episode list and write it out; exits without scanning |
 | `--season N` | (none) | Restrict matching to one season |
 | `--absolute-numbering` | off | Collapse the episode list into one continuously-numbered season |

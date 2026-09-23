@@ -26,6 +26,7 @@ class RunConfig:
     source: str = "tvmaze"  # "tvmaze" | "tmdb" | "local"
     local_json: Optional[Path] = None
     tmdb_api_key: Optional[str] = None
+    tmdb_language: str = "en-US"  # TMDb locale for episode titles, e.g. "ja-JP" to match a raw/subbed title card
     tvmaze_id: Optional[int] = None
     season: Optional[int] = None
     absolute_numbering: bool = False  # collapse to one season, sequential episode numbers

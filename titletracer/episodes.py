@@ -107,9 +107,20 @@ def fetch_from_tvmaze(show_name: str, timeout: int = 10) -> List[Episode]:
     return fetch_tvmaze_episodes_by_id(show_id, timeout=timeout)
 
 
-def fetch_from_tmdb(show_name: str, api_key: str, timeout: int = 10) -> List[Episode]:
+def fetch_from_tmdb(
+    show_name: str, api_key: str, language: str = "en-US", timeout: int = 10
+) -> List[Episode]:
+    """`language` is a TMDb locale (e.g. "ja-JP") -- pass it to get episode
+    titles in that language instead of English, which matters when the
+    on-screen title card itself is in that language (a raw/subbed rip):
+    OCR'd Japanese text will never fuzzy-match an English official title no
+    matter how accurate the OCR is, since they're different scripts
+    entirely. TMDb falls back to English itself when no translation exists
+    for a given episode, so this is safe to leave off too."""
     resp = requests.get(
-        TMDB_SEARCH_URL, params={"api_key": api_key, "query": show_name}, timeout=timeout
+        TMDB_SEARCH_URL,
+        params={"api_key": api_key, "query": show_name, "language": language},
+        timeout=timeout,
     )
     resp.raise_for_status()
     results = resp.json().get("results") or []
@@ -118,7 +129,9 @@ def fetch_from_tmdb(show_name: str, api_key: str, timeout: int = 10) -> List[Epi
     show_id = results[0]["id"]
     logger.info("TMDb matched %r -> id=%s (%s)", show_name, show_id, results[0].get("name"))
 
-    resp = requests.get(TMDB_SHOW_URL.format(id=show_id), params={"api_key": api_key}, timeout=timeout)
+    resp = requests.get(
+        TMDB_SHOW_URL.format(id=show_id), params={"api_key": api_key, "language": language}, timeout=timeout
+    )
     resp.raise_for_status()
     season_count = resp.json().get("number_of_seasons", 0)
 
@@ -126,7 +139,7 @@ def fetch_from_tmdb(show_name: str, api_key: str, timeout: int = 10) -> List[Epi
     for season in range(1, season_count + 1):
         resp = requests.get(
             TMDB_SEASON_URL.format(id=show_id, season=season),
-            params={"api_key": api_key},
+            params={"api_key": api_key, "language": language},
             timeout=timeout,
         )
         if resp.status_code != 200:
@@ -185,6 +198,7 @@ def get_episode_list(
     local_json: Optional[Path] = None,
     tmdb_api_key: Optional[str] = None,
     tvmaze_id: Optional[int] = None,
+    tmdb_language: str = "en-US",
 ) -> List[Episode]:
     """Fetch the episode list from the requested source, falling back to a
     local JSON file (if provided) when the online lookup fails."""
@@ -199,7 +213,7 @@ def get_episode_list(
                 raise EpisodeFetchError(
                     "TMDb source selected but no API key provided (--tmdb-api-key or TMDB_API_KEY)"
                 )
-            return fetch_from_tmdb(show_name, api_key)
+            return fetch_from_tmdb(show_name, api_key, language=tmdb_language)
         if source == "local":
             if not local_json:
                 raise EpisodeFetchError("Local source selected but --episodes-json was not provided")

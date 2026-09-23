@@ -146,6 +146,7 @@ class TitleTracerGUI:
         self.episodes_json = tk.StringVar()
         self.tvmaze_id = tk.StringVar()
         self.tmdb_api_key = tk.StringVar()
+        self.tmdb_language = tk.StringVar(value="en-US")
         self.movies_json = tk.StringVar()
         self.season = tk.StringVar()
         self.threshold = tk.DoubleVar(value=80.0)
@@ -204,6 +205,19 @@ class TitleTracerGUI:
         ttk.Entry(row2, textvariable=self.season, width=6).pack(side="left")
         ttk.Label(row2, text="  TVMaze ID (optional):").pack(side="left", padx=(12, 4))
         ttk.Entry(row2, textvariable=self.tvmaze_id, width=8).pack(side="left")
+
+        row2b = ttk.Frame(self.tv_frame)
+        row2b.pack(fill="x", pady=2)
+        ttk.Label(row2b, text="TMDb API key:", width=14).pack(side="left")
+        ttk.Entry(row2b, textvariable=self.tmdb_api_key, show="*", width=28).pack(side="left")
+        ttk.Label(row2b, text="  TMDb language:").pack(side="left", padx=(12, 4))
+        ttk.Entry(row2b, textvariable=self.tmdb_language, width=8).pack(side="left")
+
+        row2c = ttk.Frame(self.tv_frame)
+        row2c.pack(fill="x")
+        ttk.Label(
+            row2c, text="(Both used when Source = tmdb; language e.g. 'ja-JP' to match a raw/subbed title card)",
+        ).pack(side="left")
 
         row3 = ttk.Frame(self.tv_frame)
         row3.pack(fill="x", pady=2)
@@ -359,6 +373,7 @@ class TitleTracerGUI:
             local_json=Path(self.episodes_json.get()) if self.episodes_json.get() else None,
             movies_json=Path(self.movies_json.get()) if self.movies_json.get() else None,
             tmdb_api_key=self.tmdb_api_key.get() or None,
+            tmdb_language=self.tmdb_language.get() or "en-US",
             tvmaze_id=tvmaze_id,
             season=season,
             interval_sec=self.interval.get(),

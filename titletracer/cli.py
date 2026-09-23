@@ -66,6 +66,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument("--tmdb-api-key", default=None, help="TMDb API key (or set the TMDB_API_KEY env var)")
     p.add_argument(
+        "--tmdb-language", default="en-US",
+        help="TMDb locale for episode titles with --source tmdb (default: en-US), e.g. 'ja-JP' so "
+             "the episode list matches a raw/subbed title card instead of the English official "
+             "title -- OCR'd Japanese text will never fuzzy-match an English title regardless of "
+             "OCR accuracy, since they're different scripts. Falls back to English per-episode "
+             "wherever TMDb has no translation.",
+    )
+    p.add_argument(
         "--tvmaze-id", type=int, default=None,
         help="Fetch episodes for this exact TVMaze show id (--mode tv, --source tvmaze), bypassing "
              "name search. Use this when the show name is ambiguous (a reboot/live-action/movie "
@@ -230,7 +238,9 @@ def resolve_episodes(cfg: RunConfig) -> List:
         tvmaze_id = resolve_tvmaze_id(cfg.show_name, cfg.interactive)
 
     try:
-        episodes = get_episode_list(cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, tvmaze_id)
+        episodes = get_episode_list(
+            cfg.show_name, cfg.source, cfg.local_json, cfg.tmdb_api_key, tvmaze_id, cfg.tmdb_language,
+        )
     except EpisodeFetchError as exc:
         raise RuntimeError(f"Could not obtain an episode list: {exc}") from exc
 
@@ -372,6 +382,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         local_json=args.episodes_json,
         movies_json=args.movies_json,
         tmdb_api_key=args.tmdb_api_key,
+        tmdb_language=args.tmdb_language,
         tvmaze_id=args.tvmaze_id,
         season=args.season,
         absolute_numbering=args.absolute_numbering,
