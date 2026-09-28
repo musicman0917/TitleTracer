@@ -40,6 +40,16 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 # high score computed from a signal that was never really there.
 _MIN_ACTIVE_FRACTION = 0.03
 
+# A reference library of a few hundred images from one show tends to share
+# a lot of common structure (consistent branding/framing across episodes),
+# so an ordinary scene frame can end up coincidentally about as close to
+# *some* reference as that reference's own real match ever gets -- a score
+# clearing --threshold on its own doesn't mean much if a dozen other
+# candidates were nearly as close. Requiring the winner to be clearly ahead
+# of the runner-up (a different episode) catches that: a genuine title-card
+# match stands out from the rest of the library, a coincidental one doesn't.
+_MIN_MARGIN = 8.0
+
 # Tag stashed in MatchResult.ocr_text so callers/reports can tell an
 # image-hash match apart from an OCR/VLM one without a wider API change.
 SOURCE_TAG = "image-hash"
@@ -125,9 +135,12 @@ def match_frame(
     frame_image: np.ndarray, crop_mode: str, library: List[ReferenceImage], threshold: float,
 ) -> Optional[MatchResult]:
     """Compare one video frame's crop region against every reference image,
-    returning the best match if it clears `threshold`. Returns None (not a
-    zero-score MatchResult) when the crop region is empty, so callers can
-    tell "nothing to compare" apart from "compared and scored low"."""
+    returning the best match only if it clears `threshold` *and* is clearly
+    ahead of the next-best distinct episode (see _MIN_MARGIN) -- a score
+    that's merely above threshold isn't trustworthy on its own when several
+    other candidates are nearly as close. Returns None (not a zero-score
+    MatchResult) when the crop region is empty, so callers can tell
+    "nothing to compare" apart from "compared and scored low"."""
     region = crop_region(frame_image, crop_mode)
     if region.size == 0:
         return None
@@ -140,12 +153,19 @@ def match_frame(
         # similarity from a reference image's own blank background.
         return MatchResult(None, 0.0, SOURCE_TAG)
 
-    best_episode, best_score = None, 0.0
+    best_by_episode: dict = {}
     for ref in library:
         score = _similarity(frame_hash, ref.image_hash)
-        if score > best_score:
-            best_episode, best_score = ref.episode, score
+        if score > best_by_episode.get(ref.episode, -1.0):
+            best_by_episode[ref.episode] = score
 
-    if best_score >= threshold:
+    ranked = sorted(best_by_episode.items(), key=lambda kv: kv[1], reverse=True)
+    if not ranked:
+        return MatchResult(None, 0.0, SOURCE_TAG)
+
+    best_episode, best_score = ranked[0]
+    runner_up_score = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    if best_score >= threshold and (best_score - runner_up_score) >= _MIN_MARGIN:
         return MatchResult(best_episode, best_score, SOURCE_TAG)
     return MatchResult(None, best_score, SOURCE_TAG)
