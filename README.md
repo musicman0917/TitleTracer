@@ -300,6 +300,37 @@ solid and you just want to speed through it, and it composes well with
 filename doesn't parse, parses ambiguously (e.g. a number that doesn't match
 any loaded episode), or doesn't match the current episode list at all.
 
+### Stylized title cards OCR/VLM can't read (`--reference-images-dir`)
+
+Some shows' title cards are stylized enough -- brush-script calligraphy,
+heavy visual effects -- that neither Tesseract nor a vision-LLM can
+reliably transcribe them, no matter the language pack or model. When
+that's the case, `--reference-images-dir` sidesteps text entirely: point it
+at a local folder of your own reference screenshots (one per episode, named
+the same way `--filename-hint` parses video filenames -- `S01E05.png`,
+`Ep5.jpg`, `5Ep.png`, etc.) and each sampled frame is compared against them
+by image similarity (a difference hash) instead of OCR.
+
+```bash
+python3 titletracer.py /path/to/episodes --show "Your Show" \
+  --reference-images-dir ./title_cards --vlm-verify --dry-run
+```
+
+This tool never fetches these images for you -- you supply them yourself,
+sourced however you like (a screenshot from an episode you've already
+confirmed, a fan wiki, wherever). A file whose name doesn't unambiguously
+identify one loaded episode is skipped with a warning rather than
+aborting the run, so a partially-built reference folder still works for
+whatever it covers.
+
+It runs alongside OCR/VLM on every sampled frame rather than replacing
+them (a `matched` result gets the note "matched via reference image
+similarity" in the report, same transparency as `--filename-hint`), and a
+frame with too little visual detail to plausibly be a real title card
+(a black transition, a flat-colored scene) is rejected before it's ever
+compared against the library, so it can't borrow a false match from a
+reference image's own blank background.
+
 ### Applying the renames
 
 Once the dry run looks correct, re-run the exact same command without
@@ -430,6 +461,7 @@ priority over `--jellyfin`.
 | `--absolute-numbering` | off | Collapse the episode list into one continuously-numbered season |
 | `--absolute-numbering-season N` | `1` | Season label to use with `--absolute-numbering` |
 | `--filename-hint` | off | Try parsing an episode number out of the filename first, skipping OCR/VLM when it unambiguously matches |
+| `--reference-images-dir path/` | (none) | Match sampled frames against your own local title-card reference images by similarity, alongside OCR/VLM |
 | `--interval` | `5` | Seconds between sampled frames |
 | `--max-scan` | `300` | Only scan the first N seconds of each video (0 = whole video) |
 | `--full-scan` | off | Scan each entire video, no time cap -- same as `--max-scan 0` |
@@ -511,6 +543,8 @@ titletracer/
   episodes.py    # TVMaze / TMDb / local JSON episode fetchers (TV mode)
   movies.py       # filename guessing + TMDb movie search (movie mode)
   vlm.py          # optional local Ollama vision-model fallback
+  image_match.py  # optional reference-image similarity matching (--reference-images-dir)
+  filename_hint.py # episode-number parsing from filenames (--filename-hint, reference image names)
   gaps.py         # positional inference for title-card-less episodes
   config.py      # RunConfig dataclass / defaults
 titletracer.py    # `python titletracer.py ...` CLI entry point

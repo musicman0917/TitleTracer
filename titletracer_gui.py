@@ -160,6 +160,7 @@ class TitleTracerGUI:
         self.fill_gaps = tk.BooleanVar(value=False)
         self.absolute_numbering = tk.BooleanVar(value=False)
         self.filename_hint = tk.BooleanVar(value=False)
+        self.reference_images_dir = tk.StringVar()
         self.vlm_verify = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="Pick a directory and click Preview.")
 
@@ -245,6 +246,18 @@ class TitleTracerGUI:
             row6, text="Try filename episode number first (e.g. S01E05, 1x05, Ep5, 5Ep -- "
                        "skips OCR/VLM for files it can identify this way)",
             variable=self.filename_hint,
+        ).pack(side="left")
+
+        row7 = ttk.Frame(self.tv_frame)
+        row7.pack(fill="x", pady=2)
+        ttk.Label(row7, text="Reference images:", width=17).pack(side="left")
+        ttk.Entry(row7, textvariable=self.reference_images_dir).pack(side="left", fill="x", expand=True)
+        ttk.Button(row7, text="Browse...", command=self._browse_reference_images_dir).pack(side="left", padx=(4, 0))
+        row7b = ttk.Frame(self.tv_frame)
+        row7b.pack(fill="x")
+        ttk.Label(
+            row7b, text="(optional folder of your own title-card screenshots, one per episode, "
+                        "for a stylized title OCR/VLM can't read; filenames parsed like above)",
         ).pack(side="left")
 
         # -- Movie-specific fields --
@@ -358,6 +371,11 @@ class TitleTracerGUI:
         if path:
             self.movies_json.set(path)
 
+    def _browse_reference_images_dir(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.reference_images_dir.set(path)
+
     # -- config assembly -------------------------------------------------------
 
     def _build_config(self) -> RunConfig:
@@ -387,6 +405,7 @@ class TitleTracerGUI:
             fill_gaps=self.fill_gaps.get(),
             absolute_numbering=self.absolute_numbering.get(),
             filename_hint=self.filename_hint.get(),
+            reference_images_dir=Path(self.reference_images_dir.get()) if self.reference_images_dir.get() else None,
             vlm_verify=self.vlm_verify.get(),
         )
 

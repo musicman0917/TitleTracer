@@ -19,6 +19,7 @@ from .config import RunConfig
 from .episodes import Episode
 from .filename_hint import guess_episode_from_filename
 from .gaps import FileOutcome, infer_gaps
+from .image_match import ReferenceImage, load_reference_library, match_frame
 from .matcher import MatchResult, build_filename, match_episode, sanitize_filename
 from .movies import Movie, resolve_movie_match
 from .ocr import clean_text, crop_region, extract_text, validate_ocr_lang
@@ -58,9 +59,16 @@ def find_video_files(directory: Path, extensions: List[str]) -> List[Path]:
     return sorted(p for p in entries if p.is_file() and p.suffix.lower() in exts)
 
 
-def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> MatchResult:
+def process_video(
+    video_path: Path, episodes: List[Episode], cfg: RunConfig,
+    reference_library: Optional[List[ReferenceImage]] = None,
+) -> MatchResult:
     """Scan a single video for its title card, stopping as soon as a
-    confident match is found (or the scan window is exhausted)."""
+    confident match is found (or the scan window is exhausted). When
+    `reference_library` is supplied (--reference-images-dir), each frame is
+    also compared against it by image similarity -- useful for a stylized
+    title card OCR/VLM can't transcribe, since it doesn't require reading
+    any text at all."""
     best = MatchResult(None, 0.0, "")
 
     debug_video_dir = None
@@ -69,6 +77,13 @@ def process_video(video_path: Path, episodes: List[Episode], cfg: RunConfig) -> 
         debug_video_dir.mkdir(parents=True, exist_ok=True)
 
     for frame in sample_frames(video_path, cfg.interval_sec, cfg.max_scan_sec):
+        if reference_library:
+            image_result = match_frame(frame.image, cfg.crop_mode, reference_library, cfg.threshold)
+            if image_result is not None and image_result.score > best.score:
+                best = image_result
+                if best.episode is not None:
+                    break
+
         text, ocr_conf = extract_text(frame.image, cfg.crop_mode, lang=cfg.ocr_lang)
 
         if debug_video_dir is not None:
@@ -147,6 +162,10 @@ def scan_tv(
         )
         cfg = replace(cfg, vlm_verify=False)
 
+    reference_library = None
+    if cfg.reference_images_dir:
+        reference_library = load_reference_library(cfg.reference_images_dir, episodes)
+
     outcomes: List[FileOutcome] = []
     plan: List[PlanItem] = []
 
@@ -162,7 +181,7 @@ def scan_tv(
             outcomes.append(FileOutcome(video=video, result=MatchResult(hint_episode, 100.0, "filename-hint")))
         else:
             try:
-                result = process_video(video, episodes, cfg)
+                result = process_video(video, episodes, cfg, reference_library)
             except IOError as exc:
                 logger.error("  Skipping (could not read video): %s", exc)
                 plan.append(PlanItem(video=video, status="error", note=str(exc)))
@@ -184,7 +203,7 @@ def scan_tv(
             applied_inference = True
 
         if episode is None:
-            note = f"ocr={result.ocr_text!r}"
+            note = "no image-hash match" if result.ocr_text == "image-hash" else f"ocr={result.ocr_text!r}"
             if fo.inferred_episode is not None:
                 note += (
                     f"; possible: {fo.inferred_episode.code} {fo.inferred_episode.title!r} "
@@ -212,6 +231,8 @@ def scan_tv(
             note = fo.inferred_note
         elif result.ocr_text == "filename-hint":
             note = "matched via filename number"
+        elif result.ocr_text == "image-hash":
+            note = "matched via reference image similarity"
         else:
             note = ""
 

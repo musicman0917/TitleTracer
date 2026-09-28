@@ -99,6 +99,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "filename instead of verifying it, which defeats the point of this tool unless you "
              "already know the numbering in your rip is reliable.",
     )
+    p.add_argument(
+        "--reference-images-dir", type=Path, default=None,
+        help="Compare each sampled frame against a local folder of reference title-card images "
+             "(one per episode, filenames parsed the same way as --filename-hint) using image "
+             "similarity instead of OCR text. Useful for a stylized/calligraphic title card that "
+             "OCR and a vision-LLM both fail to transcribe. You supply the images yourself -- this "
+             "tool never fetches them.",
+    )
     p.add_argument("--interval", type=float, default=5.0, help="Seconds between sampled frames (default: 5)")
     p.add_argument(
         "--max-scan", type=float, default=300.0,
@@ -388,6 +396,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         absolute_numbering=args.absolute_numbering,
         absolute_numbering_season=args.absolute_numbering_season,
         filename_hint=args.filename_hint,
+        reference_images_dir=args.reference_images_dir,
         interval_sec=args.interval,
         max_scan_sec=0.0 if args.full_scan else args.max_scan,
         threshold=args.threshold,
