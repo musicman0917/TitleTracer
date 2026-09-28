@@ -164,7 +164,7 @@ def scan_tv(
 
     reference_library = None
     if cfg.reference_images_dir:
-        reference_library = load_reference_library(cfg.reference_images_dir, episodes)
+        reference_library = load_reference_library(cfg.reference_images_dir, episodes, cfg.crop_mode)
 
     outcomes: List[FileOutcome] = []
     plan: List[PlanItem] = []

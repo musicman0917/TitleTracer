@@ -28,7 +28,7 @@ from .ocr import crop_region
 
 logger = logging.getLogger(__name__)
 
-_HASH_SIZE = 16  # 16x16 -> 256-bit difference hash
+_HASH_SIZE = 32  # 32x32 -> 1024-bit difference hash
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 # A dHash of a near-uniform frame (a black transition, a flat-colored scene)
@@ -68,13 +68,21 @@ class ReferenceImage:
     path: Path
 
 
-def load_reference_library(directory: Path, episodes: List[Episode]) -> List[ReferenceImage]:
+def load_reference_library(
+    directory: Path, episodes: List[Episode], crop_mode: str = "full",
+) -> List[ReferenceImage]:
     """Load every image in `directory` whose filename identifies exactly
     one episode in `episodes` (via the same parsing --filename-hint uses
     on video filenames). A file that doesn't parse, or whose number doesn't
     match any loaded episode, is skipped with a warning rather than
     aborting the whole run -- a partially-organized folder still works for
-    whatever episodes it does cover."""
+    whatever episodes it does cover.
+
+    `crop_mode` is applied to each reference image the same way it's applied
+    to sampled video frames in `match_frame()` -- these need matching
+    framing to compare meaningfully. A typical reference screenshot (a full
+    broadcast frame, not pre-cropped to just the title text) should use the
+    same --crop value as the actual scan, not be left at its default "full"."""
     if not directory.is_dir():
         raise RuntimeError(f"Reference images directory not found: {directory}")
 
@@ -97,7 +105,12 @@ def load_reference_library(directory: Path, episodes: List[Episode]) -> List[Ref
             logger.warning("Could not read reference image %s -- skipping it.", path.name)
             continue
 
-        library.append(ReferenceImage(episode=episode, image_hash=_difference_hash(image), path=path))
+        region = crop_region(image, crop_mode)
+        if region.size == 0:
+            logger.warning("Reference image %s cropped to nothing -- skipping it.", path.name)
+            continue
+
+        library.append(ReferenceImage(episode=episode, image_hash=_difference_hash(region), path=path))
 
     if not library:
         raise RuntimeError(

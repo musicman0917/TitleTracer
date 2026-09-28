@@ -323,6 +323,12 @@ identify one loaded episode is skipped with a warning rather than
 aborting the run, so a partially-built reference folder still works for
 whatever it covers.
 
+Reference images get the same `--crop` treatment as sampled video frames
+before comparison, so a full broadcast-frame screenshot (not pre-cropped to
+just the title text) still lines up correctly with what's compared against
+it -- use whichever `--crop` value fits where the title actually sits on
+screen, same as you'd tune it for OCR.
+
 It runs alongside OCR/VLM on every sampled frame rather than replacing
 them (a `matched` result gets the note "matched via reference image
 similarity" in the report, same transparency as `--filename-hint`), and a
