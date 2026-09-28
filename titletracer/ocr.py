@@ -77,10 +77,20 @@ def clean_text(raw: str) -> str:
 def validate_ocr_lang(lang: str) -> None:
     """Log a clear warning if a requested Tesseract language pack isn't
     installed, rather than letting every frame fail silently with no
-    obvious explanation for why nothing ever matches."""
+    obvious explanation for why nothing ever matches. Raises RuntimeError
+    with install instructions if Tesseract itself isn't found at all --
+    that's a hard stop, not something to silently limp along without."""
     requested = [code for code in lang.split("+") if code]
     try:
         installed = set(pytesseract.get_languages(config=""))
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError(
+            "Tesseract OCR is not installed, or isn't on PATH, and --tesseract-cmd wasn't set "
+            "either. Install it -- 'sudo apt-get install tesseract-ocr' (Debian/Ubuntu), "
+            "'brew install tesseract' (macOS), or the UB-Mannheim installer / "
+            "'winget install --id UB-Mannheim.TesseractOCR' (Windows) -- then either restart your "
+            "shell so PATH refreshes, or pass --tesseract-cmd \"C:\\path\\to\\tesseract.exe\"."
+        ) from exc
     except pytesseract.TesseractError as exc:
         logger.debug("Could not list installed Tesseract languages: %s", exc)
         return
